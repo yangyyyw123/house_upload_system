@@ -1,0 +1,18 @@
+{
+    "train_img_dir": "data/Ttraincrop/img",
+    "train_mask_dir": "data/Ttraincrop/mask",
+    "val_img_dir": "data/Tvalcrop/img",
+    "val_mask_dir": "data/Tvalcrop/mask",
+    "test_img_dir": "data/Ttestcrop/img",
+    "test_mask_dir": "data/Ttestcrop/mask",
+    "image_height": 512,
+    "image_width": 512,
+    "input_channels": 3,
+    "num_classes": 1,
+    "epochs": 30,
+    "batch_size": 24,
+    "lr": 0.0001,
+    "l2_lambda": 0.0,
+    "pretrained_model_encoder": "efficientnet-b4",
+    "pretrained_model_arch": "UnetPlusPlus"
+}

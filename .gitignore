@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+.venv11/
+.venv311/
+venv/
+env/
+
+# IDE and OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# Notebook state
+.ipynb_checkpoints/
+
+# Local databases and runtime state
+instance/
+backend/instance/
+*.db
+*.sqlite3
+
+# Generated uploads and segmentation outputs
+/uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+!backend/uploads/segmentation/
+backend/uploads/segmentation/*
+!backend/uploads/segmentation/.gitkeep
+
+# Local model weights
+model/*.pth
+model/*.pt
+model/*.ckpt
+
+# Python packaging
+build/
+dist/
+*.egg-info/

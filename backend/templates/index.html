@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>房屋信息上传</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260330-house-bind-1') }}">
+</head>
+<body>
+    <main class="page">
+        <section id="globalStatus" class="global-status status status-idle">
+            页面已就绪，可以先提交房屋信息，再上传裂缝图片。
+        </section>
+
+        <section class="panel">
+            <h1>上传房屋信息</h1>
+            <div class="binding-card">
+                <strong>当前绑定房屋</strong>
+                <p id="houseBindingText">尚未绑定房屋信息。建议先提交房屋信息，再上传图片，便于归档和历史追踪。</p>
+            </div>
+
+            <form id="infoForm" class="form-card">
+                <label for="house_number">房屋编号</label>
+                <input type="text" name="house_number" id="house_number" placeholder="例如：fang001" required>
+
+                <label for="house_type">房屋类型</label>
+                <select id="house_type" name="house_type" onchange="toggleOtherInput('house_type')">
+                    <option value="">请选择房屋类型</option>
+                    <option value="城市住宅">城市住宅</option>
+                    <option value="农村自建房">农村自建房</option>
+                    <option value="公寓">公寓</option>
+                    <option value="别墅">别墅</option>
+                    <option value="商铺">商铺</option>
+                    <option value="厂房">厂房</option>
+                    <option value="其他">其他</option>
+                </select>
+                <input type="text" id="house_type_other" class="hidden-field" placeholder="请输入自定义房屋类型">
+
+                <label for="crack_location">裂缝位置</label>
+                <select id="crack_location" name="crack_location" onchange="toggleOtherInput('crack_location')">
+                    <option value="">请选择裂缝位置</option>
+                    <option value="墙体">墙体</option>
+                    <option value="梁">梁</option>
+                    <option value="柱">柱</option>
+                    <option value="楼板">楼板</option>
+                    <option value="门窗洞口">门窗洞口</option>
+                    <option value="屋顶">屋顶</option>
+                    <option value="地面">地面</option>
+                    <option value="其他">其他</option>
+                </select>
+                <input type="text" id="crack_location_other" class="hidden-field" placeholder="请输入自定义裂缝位置">
+
+                <label for="detection_type">检测类型</label>
+                <select id="detection_type" name="detection_type" onchange="toggleOtherInput('detection_type')">
+                    <option value="">请选择检测类型</option>
+                    <option value="表面裂缝检测">表面裂缝检测</option>
+                    <option value="裂缝宽度检测">裂缝宽度检测</option>
+                    <option value="裂缝长度检测">裂缝长度检测</option>
+                    <option value="语义分割检测">语义分割检测</option>
+                    <option value="综合检测">综合检测</option>
+                    <option value="其他">其他</option>
+                </select>
+                <input type="text" id="detection_type_other" class="hidden-field" placeholder="请输入自定义检测类型">
+
+                <button id="submitInfoButton" type="button" onclick="submitHouseInfo()">提交房屋信息</button>
+                <p id="infoStatus" class="status status-idle">等待提交房屋信息</p>
+            </form>
+        </section>
+
+        <section class="panel">
+            <form id="uploadForm" class="form-card" enctype="multipart/form-data">
+                <label for="photo">上传照片</label>
+                <input type="file" name="file" id="photo" accept="image/*" required onchange="previewSelectedImage()">
+
+                <div id="selectedPreviewCard" class="preview-card hidden">
+                    <strong>待上传图片预览</strong>
+                    <img id="selectedPreview" alt="待上传图片预览">
+                    <p id="selectedFileName" class="preview-name">尚未选择图片</p>
+                </div>
+
+                <button id="uploadButton" type="button" onclick="uploadPhoto()">上传图片</button>
+                <p id="uploadStatus" class="status status-idle">等待上传图片</p>
+                <p class="hint">上传时会自动绑定到当前房屋。大图需要切块推理，当前若使用 CPU 推理，处理可能需要 1 到 2 分钟。</p>
+            </form>
+        </section>
+
+        <section id="uploadResult" class="panel result-panel hidden">
+            <h2>本次检测结果</h2>
+            <div class="result-grid">
+                <article class="result-card">
+                    <h3>原图</h3>
+                    <img id="sourcePreview" alt="原图预览">
+                    <a id="sourceLink" target="_blank" rel="noopener noreferrer">打开原图</a>
+                </article>
+                <article class="result-card">
+                    <h3>裂缝掩码</h3>
+                    <img id="maskPreview" alt="裂缝掩码预览">
+                    <a id="maskLink" target="_blank" rel="noopener noreferrer">打开掩码图</a>
+                </article>
+                <article class="result-card">
+                    <h3>叠加结果</h3>
+                    <img id="overlayPreview" alt="叠加结果预览">
+                    <a id="overlayLink" target="_blank" rel="noopener noreferrer">打开叠加图</a>
+                </article>
+            </div>
+            <dl class="result-meta">
+                <div>
+                    <dt>裂缝像素占比</dt>
+                    <dd id="crackAreaRatio">-</dd>
+                </div>
+                <div>
+                    <dt>裂缝像素数</dt>
+                    <dd id="crackPixelCount">-</dd>
+                </div>
+                <div>
+                    <dt>推理设备</dt>
+                    <dd id="deviceName">-</dd>
+                </div>
+                <div>
+                    <dt>切块数量</dt>
+                    <dd id="patchCount">-</dd>
+                </div>
+            </dl>
+        </section>
+
+        <section id="historyPanel" class="panel hidden">
+            <h2>该房屋最近检测记录</h2>
+            <div id="historyList" class="history-list"></div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js', v='20260330-house-bind-1') }}"></script>
+</body>
+</html>

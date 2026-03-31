@@ -1,0 +1,10 @@
+matplotlib
+numpy
+opencv_python
+Pillow
+PyQt5
+PyQt5_sip
+scikit_learn
+segmentation_models_pytorch
+skan
+skimage
