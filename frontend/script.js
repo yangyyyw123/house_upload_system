@@ -1,5 +1,13 @@
 let currentHouseId = null;
 let currentHouseNumber = "";
+const previewUrls = new Map();
+
+const BUNDLE_FIELDS = [
+    { id: "long_view", label: "长景" },
+    { id: "medium_view", label: "中景" },
+    { id: "close_view", label: "近景" },
+];
+const MAX_BATCH_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 function setStatus(elementId, kind, text) {
     const element = document.getElementById(elementId);
@@ -17,19 +25,17 @@ function setButtonState(buttonId, disabled, text) {
     button.textContent = text;
 }
 
-function showResultPanel(show) {
-    document.getElementById("uploadResult").classList.toggle("hidden", !show);
+function setVisible(elementId, visible) {
+    document.getElementById(elementId).classList.toggle("hidden", !visible);
 }
 
-function showHistoryPanel(show) {
-    document.getElementById("historyPanel").classList.toggle("hidden", !show);
-}
-
-function fillPreview(imageId, linkId, url) {
-    const image = document.getElementById(imageId);
-    const link = document.getElementById(linkId);
-    image.src = url;
-    link.href = url;
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
 }
 
 function toggleOtherInput(fieldId) {
@@ -47,58 +53,316 @@ function toggleOtherInput(fieldId) {
 function getFieldValue(fieldId) {
     const select = document.getElementById(fieldId);
     const otherInput = document.getElementById(`${fieldId}_other`);
-
     if (select.value === "其他") {
         return otherInput.value.trim();
     }
-
     return select.value.trim();
 }
 
 function updateHouseBinding(houseId, houseNumber) {
     currentHouseId = houseId;
     currentHouseNumber = houseNumber;
-    const text = houseId
+    document.getElementById("houseBindingText").textContent = houseId
         ? `当前已绑定房屋：ID ${houseId} / 编号 ${houseNumber}`
-        : "尚未绑定房屋信息。建议先提交房屋信息，再上传图片，便于归档和历史追踪。";
-    document.getElementById("houseBindingText").textContent = text;
+        : "尚未绑定房屋信息。提交房屋档案后，后续图像会自动归档到对应房屋。";
 }
 
-function previewSelectedImage() {
-    const fileInput = document.getElementById("photo");
-    const previewCard = document.getElementById("selectedPreviewCard");
-    const previewImage = document.getElementById("selectedPreview");
-    const previewName = document.getElementById("selectedFileName");
+function clearPreviewUrl(fieldId) {
+    const url = previewUrls.get(fieldId);
+    if (url) {
+        URL.revokeObjectURL(url);
+        previewUrls.delete(fieldId);
+    }
+}
 
-    if (!fileInput.files.length) {
-        previewCard.classList.add("hidden");
-        previewImage.removeAttribute("src");
-        previewName.textContent = "尚未选择图片";
+function resetBundleQualityPanel() {
+    document.getElementById("bundleQualitySummary").textContent = "等待上传后进行检测。";
+    document.getElementById("bundleQualityList").innerHTML = "";
+    setVisible("bundleQualityPanel", false);
+    setVisible("overrideUploadButton", false);
+}
+
+function getQualityBadgeClass(status) {
+    if (status === "good") {
+        return "quality-good";
+    }
+    if (status === "warning") {
+        return "quality-warning";
+    }
+    if (status === "reject") {
+        return "quality-reject";
+    }
+    return "quality-idle";
+}
+
+function formatBytes(bytes) {
+    if (bytes >= 1024 * 1024) {
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    }
+    return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function getBundleSelectionSummary() {
+    let totalBytes = 0;
+    const selected = [];
+
+    BUNDLE_FIELDS.forEach((field) => {
+        const input = document.getElementById(field.id);
+        if (input.files.length) {
+            const file = input.files[0];
+            totalBytes += file.size;
+            selected.push({
+                label: field.label,
+                size: file.size,
+                name: file.name,
+            });
+        }
+    });
+
+    return {
+        totalBytes,
+        selected,
+        isComplete: selected.length === BUNDLE_FIELDS.length,
+        exceedsLimit: totalBytes > MAX_BATCH_UPLOAD_BYTES,
+    };
+}
+
+function updateBundleSizeSummary() {
+    const panel = document.getElementById("bundleSizePanel");
+    const summary = document.getElementById("bundleSizeSummary");
+    const { totalBytes, selected, isComplete, exceedsLimit } = getBundleSelectionSummary();
+
+    panel.className = "bundle-size-panel";
+    if (!selected.length) {
+        summary.textContent = "尚未选择完整的长景 / 中景 / 近景图像。";
         return;
     }
 
-    const file = fileInput.files[0];
-    previewName.textContent = file.name;
-    previewCard.classList.remove("hidden");
-    previewImage.src = URL.createObjectURL(file);
-}
+    const detail = selected.map((item) => `${item.label} ${formatBytes(item.size)}`).join("，");
+    const totalText = `当前已选择 ${selected.length}/3 张图，总大小 ${formatBytes(totalBytes)}。${detail}。`;
 
-function renderUploadResult(data) {
-    if (!data.segmentation) {
-        showResultPanel(false);
+    if (exceedsLimit) {
+        panel.classList.add("bundle-size-error");
+        summary.textContent = `${totalText} 已超过 100MB 上限，请压缩图片或更换较小文件后再上传。`;
         return;
     }
 
-    fillPreview("sourcePreview", "sourceLink", data.file_url);
-    fillPreview("maskPreview", "maskLink", data.segmentation.mask_url);
-    fillPreview("overlayPreview", "overlayLink", data.segmentation.overlay_url);
+    if (isComplete) {
+        const remaining = MAX_BATCH_UPLOAD_BYTES - totalBytes;
+        if (remaining < 15 * 1024 * 1024) {
+            panel.classList.add("bundle-size-warning");
+            summary.textContent = `${totalText} 已接近 100MB 上限，剩余可用空间 ${formatBytes(remaining)}。`;
+            return;
+        }
 
-    document.getElementById("crackAreaRatio").textContent = data.segmentation.crack_area_ratio;
-    document.getElementById("crackPixelCount").textContent = data.segmentation.crack_pixel_count;
-    document.getElementById("deviceName").textContent = data.segmentation.device;
-    document.getElementById("patchCount").textContent = data.segmentation.patch_count;
+        panel.classList.add("bundle-size-good");
+        summary.textContent = `${totalText} 在 100MB 限制内，可以上传。`;
+        return;
+    }
 
-    showResultPanel(true);
+    summary.textContent = `${totalText} 还需要补齐剩余图像后才能上传。`;
+}
+
+async function parseResponsePayload(response) {
+    const rawText = await response.text();
+    if (!rawText) {
+        return {};
+    }
+
+    try {
+        return JSON.parse(rawText);
+    } catch (_error) {
+        if (rawText.trim().startsWith("<!doctype") || rawText.trim().startsWith("<html")) {
+            return {
+                message: `服务器返回了非 JSON 错误页面，状态码 ${response.status}。请查看后端终端日志。`,
+            };
+        }
+        return {
+            message: rawText.trim(),
+        };
+    }
+}
+
+async function previewBundleImage(fieldId) {
+    const input = document.getElementById(fieldId);
+    const card = document.getElementById(`${fieldId}_preview_card`);
+    const image = document.getElementById(`${fieldId}_preview`);
+    const meta = document.getElementById(`${fieldId}_preview_meta`);
+    const name = document.getElementById(`${fieldId}_preview_name`);
+
+    resetBundleQualityPanel();
+
+    if (!input.files.length) {
+        card.classList.add("hidden");
+        image.removeAttribute("src");
+        meta.textContent = "尚未读取图像信息";
+        name.textContent = "尚未选择图像";
+        clearPreviewUrl(fieldId);
+        updateBundleSizeSummary();
+        return;
+    }
+
+    const file = input.files[0];
+    clearPreviewUrl(fieldId);
+    const url = URL.createObjectURL(file);
+    previewUrls.set(fieldId, url);
+    image.src = url;
+    name.textContent = file.name;
+    card.classList.remove("hidden");
+
+    const sizeMb = (file.size / 1024 / 1024).toFixed(2);
+    const preview = new Image();
+    preview.onload = () => {
+        meta.textContent = `${preview.width} × ${preview.height} / ${sizeMb} MB`;
+    };
+    preview.src = url;
+    updateBundleSizeSummary();
+}
+
+function renderBundleQualityResults(results, rejected = false) {
+    const qualityList = document.getElementById("bundleQualityList");
+    qualityList.innerHTML = "";
+
+    results.forEach((item) => {
+        const report = item.quality_report || {};
+        const metrics = report.metrics || {};
+        const warnings = (report.warnings || [])
+            .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+            .join("");
+
+        const block = document.createElement("article");
+        block.className = "bundle-quality-card";
+        block.innerHTML = `
+            <div class="bundle-quality-head">
+                <strong>${escapeHtml(item.capture_scale || "未标注")}</strong>
+                <span class="quality-badge ${getQualityBadgeClass(report.status)}">${escapeHtml(report.status || "待检测")}</span>
+            </div>
+            <p class="bundle-quality-file">${escapeHtml(item.original_filename || "-")}</p>
+            <div class="bundle-quality-meta">
+                <span>质量分：${escapeHtml(report.score ?? "-")}</span>
+                <span>分辨率：${metrics.width && metrics.height ? `${metrics.width} × ${metrics.height}` : "-"}</span>
+                <span>亮度：${escapeHtml(metrics.brightness ?? "-")}</span>
+                <span>边缘强度：${escapeHtml(metrics.edge_strength ?? "-")}</span>
+            </div>
+            <p class="bundle-quality-summary">${escapeHtml(report.summary || "")}</p>
+            ${warnings ? `<ul class="bundle-quality-warnings">${warnings}</ul>` : ""}
+        `;
+        qualityList.appendChild(block);
+    });
+
+    document.getElementById("bundleQualitySummary").textContent = rejected
+        ? "三张图中至少有一张未通过预检，请补拍或强制继续。"
+        : "三张图的质量预检结果如下。";
+    setVisible("bundleQualityPanel", true);
+    setVisible("overrideUploadButton", rejected);
+}
+
+function buildResultCard(item) {
+    const quality = item.quality_report || {};
+    const risk = item.risk_assessment || {};
+    const reportLink = item.report_url
+        ? `<a class="button-link compact-link" href="${escapeHtml(item.report_url)}" target="_blank" rel="noopener noreferrer">下载报告</a>`
+        : "";
+    const sourceLink = item.file_url ? `<a href="${escapeHtml(item.file_url)}" target="_blank" rel="noopener noreferrer">原图</a>` : "";
+    const maskLink = item.segmentation?.mask_url ? `<a href="${escapeHtml(item.segmentation.mask_url)}" target="_blank" rel="noopener noreferrer">掩码</a>` : "";
+    const overlayLink = item.segmentation?.overlay_url ? `<a href="${escapeHtml(item.segmentation.overlay_url)}" target="_blank" rel="noopener noreferrer">叠加图</a>` : "";
+
+    return `
+        <article class="batch-result-card">
+            <div class="batch-result-head">
+                <div>
+                    <strong>${escapeHtml(item.capture_scale || "未标注")}</strong>
+                    <p>${escapeHtml(item.original_filename || "")}</p>
+                </div>
+                <span class="quality-badge ${getQualityBadgeClass(quality.status)}">${escapeHtml(quality.status || "未知")}</span>
+            </div>
+            <div class="summary-grid batch-summary-grid">
+                <article class="summary-card">
+                    <span>检测编号</span>
+                    <strong>${escapeHtml(item.detection_code || "-")}</strong>
+                </article>
+                <article class="summary-card">
+                    <span>风险等级</span>
+                    <strong>${escapeHtml(risk.risk_level || "未生成")}</strong>
+                </article>
+                <article class="summary-card">
+                    <span>质量状态</span>
+                    <strong>${escapeHtml(quality.status || "-")} / ${escapeHtml(quality.score ?? "-")}</strong>
+                </article>
+                <article class="summary-card">
+                    <span>裂缝占比</span>
+                    <strong>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</strong>
+                </article>
+            </div>
+            <div class="result-notes">
+                <article class="note-card">
+                    <h3>质量说明</h3>
+                    <p>${escapeHtml(quality.summary || item.message || "-")}</p>
+                </article>
+                <article class="note-card">
+                    <h3>风险说明</h3>
+                    <p>${escapeHtml(risk.risk_summary || item.segmentation_error || item.message || "-")}</p>
+                </article>
+            </div>
+            <div class="report-actions">
+                ${reportLink}
+            </div>
+            <div class="result-grid">
+                <article class="result-card">
+                    <h3>原图</h3>
+                    ${item.file_url ? `<img src="${escapeHtml(item.file_url)}" alt="原图预览">` : '<div class="result-placeholder">无原图</div>'}
+                    ${sourceLink}
+                </article>
+                <article class="result-card">
+                    <h3>裂缝掩码</h3>
+                    ${item.segmentation?.mask_url ? `<img src="${escapeHtml(item.segmentation.mask_url)}" alt="掩码预览">` : '<div class="result-placeholder">无掩码</div>'}
+                    ${maskLink}
+                </article>
+                <article class="result-card">
+                    <h3>叠加结果</h3>
+                    ${item.segmentation?.overlay_url ? `<img src="${escapeHtml(item.segmentation.overlay_url)}" alt="叠加图预览">` : '<div class="result-placeholder">无叠加图</div>'}
+                    ${overlayLink}
+                </article>
+            </div>
+            <dl class="result-meta">
+                <div>
+                    <dt>裂缝像素占比</dt>
+                    <dd>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</dd>
+                </div>
+                <div>
+                    <dt>裂缝像素数</dt>
+                    <dd>${escapeHtml(item.segmentation?.crack_pixel_count ?? "-")}</dd>
+                </div>
+                <div>
+                    <dt>推理设备</dt>
+                    <dd>${escapeHtml(item.segmentation?.device ?? "-")}</dd>
+                </div>
+                <div>
+                    <dt>切块数量</dt>
+                    <dd>${escapeHtml(item.segmentation?.patch_count ?? "-")}</dd>
+                </div>
+            </dl>
+        </article>
+    `;
+}
+
+function renderBatchUploadResult(results) {
+    const list = document.getElementById("batchResultList");
+    list.innerHTML = results.map(buildResultCard).join("");
+    setVisible("uploadResult", true);
+}
+
+function renderTrendSummary(summary) {
+    if (!summary) {
+        setVisible("trendSummaryCard", false);
+        return;
+    }
+
+    const element = document.getElementById("trendSummaryText");
+    const card = document.getElementById("trendSummaryCard");
+    card.className = `trend-card trend-${summary.status || "insufficient"}`;
+    element.textContent = summary.message || "至少需要两次检测后才能生成趋势分析。";
+    setVisible("trendSummaryCard", true);
 }
 
 function renderHistory(records) {
@@ -106,55 +370,69 @@ function renderHistory(records) {
     historyList.innerHTML = "";
 
     if (!records.length) {
-        historyList.innerHTML = '<p class="history-empty">当前房屋还没有检测历史。</p>';
-        showHistoryPanel(true);
+        historyList.innerHTML = '<p class="history-empty">当前房屋还没有检测记录。</p>';
+        setVisible("historyPanel", true);
         return;
     }
 
     records.forEach((record) => {
         const item = document.createElement("article");
         item.className = "history-item";
+        const warnings = (record.quality_warnings || [])
+            .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+            .join("");
+
         item.innerHTML = `
             <div class="history-header">
-                <strong>${record.original_filename}</strong>
-                <span>${record.created_at || "未知时间"}</span>
+                <div>
+                    <strong>${escapeHtml(record.detection_code || record.original_filename)}</strong>
+                    <p>${escapeHtml(record.original_filename || "")}</p>
+                </div>
+                <span>${escapeHtml(record.created_at || "未知时间")}</span>
             </div>
             <div class="history-meta">
-                <span>裂缝占比：${record.crack_area_ratio ?? "-"}</span>
-                <span>像素数：${record.crack_pixel_count ?? "-"}</span>
-                <span>设备：${record.inference_device ?? "-"}</span>
+                <span>尺度：${escapeHtml(record.capture_scale || "-")}</span>
+                <span>构件：${escapeHtml(record.component_type || "-")}</span>
+                <span>场景：${escapeHtml(record.scenario_type || "-")}</span>
+                <span>质量：${escapeHtml(record.quality_status || "-")} / ${escapeHtml(record.quality_score ?? "-")}</span>
+                <span>风险：${escapeHtml(record.risk_level || "-")}</span>
+                <span>裂缝占比：${escapeHtml(record.crack_area_ratio ?? "-")}</span>
             </div>
+            <p class="history-summary">${escapeHtml(record.risk_summary || "暂无风险说明。")}</p>
+            <p class="history-summary">${escapeHtml(record.recommendation || "暂无处置建议。")}</p>
+            ${warnings ? `<ul class="history-warnings">${warnings}</ul>` : ""}
             <div class="history-links">
-                <a href="${record.source_image_url}" target="_blank" rel="noopener noreferrer">原图</a>
-                <a href="${record.mask_url}" target="_blank" rel="noopener noreferrer">掩码</a>
-                <a href="${record.overlay_url}" target="_blank" rel="noopener noreferrer">叠加图</a>
+                ${record.source_image_url ? `<a href="${escapeHtml(record.source_image_url)}" target="_blank" rel="noopener noreferrer">原图</a>` : ""}
+                ${record.mask_url ? `<a href="${escapeHtml(record.mask_url)}" target="_blank" rel="noopener noreferrer">掩码</a>` : ""}
+                ${record.overlay_url ? `<a href="${escapeHtml(record.overlay_url)}" target="_blank" rel="noopener noreferrer">叠加图</a>` : ""}
             </div>
             <div class="history-actions">
-                <button type="button" class="secondary-button" onclick="rerunDetection(${record.id})">重新检测</button>
+                <a class="button-link compact-link" href="${escapeHtml(record.report_url || `/detections/${record.id}/report`)}" target="_blank" rel="noopener noreferrer">下载报告</a>
+                <button type="button" class="secondary-button" onclick="rerunDetection(${record.id})">重新分析</button>
                 <button type="button" class="danger-button" onclick="deleteDetection(${record.id})">删除记录</button>
             </div>
         `;
         historyList.appendChild(item);
     });
 
-    showHistoryPanel(true);
+    setVisible("historyPanel", true);
 }
 
 async function loadHouseDetections(houseId) {
     if (!houseId) {
-        showHistoryPanel(false);
+        setVisible("historyPanel", false);
         return;
     }
 
     try {
         const response = await fetch(`/house/${houseId}/detections`);
         const result = await response.json();
-
         if (!response.ok) {
-            showHistoryPanel(false);
+            setVisible("historyPanel", false);
             return;
         }
 
+        renderTrendSummary(result.trend_summary);
         renderHistory(result.records || []);
     } catch (error) {
         console.error("Failed to load house detections:", error);
@@ -167,27 +445,9 @@ async function submitHouseInfo() {
     const crackLocation = getFieldValue("crack_location");
     const detectionType = getFieldValue("detection_type");
 
-    if (!houseNumber) {
-        setStatus("infoStatus", "error", "请填写房屋编号");
-        setGlobalStatus("error", "请填写房屋编号");
-        return;
-    }
-
-    if (!houseType) {
-        setStatus("infoStatus", "error", "请选择或填写房屋类型");
-        setGlobalStatus("error", "请选择或填写房屋类型");
-        return;
-    }
-
-    if (!crackLocation) {
-        setStatus("infoStatus", "error", "请选择或填写裂缝位置");
-        setGlobalStatus("error", "请选择或填写裂缝位置");
-        return;
-    }
-
-    if (!detectionType) {
-        setStatus("infoStatus", "error", "请选择或填写检测类型");
-        setGlobalStatus("error", "请选择或填写检测类型");
+    if (!houseNumber || !houseType || !crackLocation || !detectionType) {
+        setStatus("infoStatus", "error", "请完整填写房屋编号、房屋类型、裂缝位置和检测任务。");
+        setGlobalStatus("error", "房屋档案信息尚未填写完整。");
         return;
     }
 
@@ -195,117 +455,151 @@ async function submitHouseInfo() {
         house_number: houseNumber,
         house_type: houseType,
         crack_location: crackLocation,
-        detection_type: detectionType
+        detection_type: detectionType,
     };
 
     setButtonState("submitInfoButton", true, "提交中...");
-    setStatus("infoStatus", "loading", "正在提交房屋信息...");
-    setGlobalStatus("loading", "正在提交房屋信息，一般会在几秒内返回结果。");
+    setStatus("infoStatus", "loading", "正在提交房屋档案...");
+    setGlobalStatus("loading", "正在建立房屋档案，请稍候。");
 
     try {
         const response = await fetch("/submit_house_info", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(data)
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
         });
-        const result = await response.json();
+        const result = await parseResponsePayload(response);
 
         if (response.status === 409 && result.house_id) {
             updateHouseBinding(result.house_id, houseNumber);
             await loadHouseDetections(result.house_id);
-            setStatus("infoStatus", "success", `房屋编号已存在，已自动绑定到 house_id: ${result.house_id}`);
-            setGlobalStatus("success", `房屋编号已存在，已绑定到现有 house_id: ${result.house_id}`);
+            setStatus("infoStatus", "success", `该房屋已存在，已自动绑定到档案 ID ${result.house_id}。`);
+            setGlobalStatus("success", `已绑定已有房屋档案 ID ${result.house_id}。`);
             return;
         }
 
         if (!response.ok) {
-            setStatus("infoStatus", "error", result.message || "提交房屋信息失败");
-            setGlobalStatus("error", result.message || "提交房屋信息失败");
+            setStatus("infoStatus", "error", result.message || "房屋档案提交失败。");
+            setGlobalStatus("error", result.message || "房屋档案提交失败。");
             return;
         }
 
         updateHouseBinding(result.house_id, houseNumber);
         await loadHouseDetections(result.house_id);
-        setStatus("infoStatus", "success", `房屋信息提交成功，house_id: ${result.house_id}`);
-        setGlobalStatus("success", `房屋信息提交成功，house_id: ${result.house_id}`);
+        setStatus("infoStatus", "success", `房屋档案已创建，档案 ID ${result.house_id}。`);
+        setGlobalStatus("success", `房屋档案创建成功，后续图像将绑定到房屋 ${houseNumber}。`);
     } catch (error) {
-        setStatus("infoStatus", "error", `提交房屋信息失败: ${error}`);
-        setGlobalStatus("error", `提交房屋信息失败: ${error}`);
+        setStatus("infoStatus", "error", `房屋档案提交失败：${error}`);
+        setGlobalStatus("error", `房屋档案提交失败：${error}`);
     } finally {
-        setButtonState("submitInfoButton", false, "提交房屋信息");
+        setButtonState("submitInfoButton", false, "提交房屋档案");
     }
 }
 
-async function uploadPhoto() {
+function buildUploadFormData(forceLowQuality = false) {
     const formData = new FormData();
-    const fileInput = document.getElementById("photo");
+    formData.append("scenario_type", document.getElementById("scenario_type").value);
+    formData.append("component_type", document.getElementById("component_type").value);
 
-    if (!fileInput.files.length) {
-        setStatus("uploadStatus", "error", "请先选择图片");
-        setGlobalStatus("error", "请先选择图片后再上传。");
-        return;
-    }
-
-    formData.append("file", fileInput.files[0]);
+    BUNDLE_FIELDS.forEach((field) => {
+        const input = document.getElementById(field.id);
+        if (input.files.length) {
+            formData.append(field.id, input.files[0]);
+        }
+    });
 
     if (currentHouseId) {
         formData.append("house_id", currentHouseId);
     }
+    if (forceLowQuality) {
+        formData.append("allow_low_quality", "true");
+    }
 
-    showResultPanel(false);
-    setButtonState("uploadButton", true, "处理中...");
-    setStatus("uploadStatus", "loading", "图片已上传，正在执行裂缝检测，请不要刷新页面...");
+    return formData;
+}
+
+function validateBundleSelection() {
+    const missing = BUNDLE_FIELDS.filter((field) => !document.getElementById(field.id).files.length);
+    return missing;
+}
+
+async function uploadPhoto(forceLowQuality = false) {
+    const missing = validateBundleSelection();
+    if (missing.length) {
+        const names = missing.map((field) => field.label).join("、");
+        setStatus("uploadStatus", "error", `请先补齐这几张图像：${names}。`);
+        setGlobalStatus("error", `当前还缺少 ${names} 图像，无法执行三图成组上传。`);
+        return;
+    }
+
+    const bundleSummary = getBundleSelectionSummary();
+    if (bundleSummary.exceedsLimit) {
+        setStatus("uploadStatus", "error", `三张图总大小 ${formatBytes(bundleSummary.totalBytes)}，已超过 100MB 上限，请压缩后再上传。`);
+        setGlobalStatus("error", "本次批量上传已超过 100MB 上限，前端已阻止提交。");
+        updateBundleSizeSummary();
+        return;
+    }
+
+    setVisible("uploadResult", false);
+    setButtonState("uploadButton", true, forceLowQuality ? "强制分析中..." : "批量分析中...");
+    setStatus("uploadStatus", "loading", "长景 / 中景 / 近景三张图正在上传并执行批量检测...");
     setGlobalStatus(
         "loading",
         currentHouseId
-            ? `裂缝检测已开始，结果将自动绑定到房屋 ID ${currentHouseId}。CPU 模式下大图通常需要 1 到 2 分钟。`
-            : "裂缝检测已开始。当前未绑定房屋信息，结果只会保存在文件系统。CPU 模式下大图通常需要 1 到 2 分钟。"
+            ? `正在批量分析三张图像，结果会自动归档到房屋 ID ${currentHouseId}。`
+            : "正在批量分析三张图像，当前未绑定房屋档案，结果不会进入历史趋势。"
     );
 
     try {
-        const response = await fetch("/upload", {
+        const response = await fetch("/upload-batch", {
             method: "POST",
-            body: formData
+            body: buildUploadFormData(forceLowQuality),
         });
-        const result = await response.json();
+        const result = await parseResponsePayload(response);
 
-        if (!response.ok) {
-            setStatus("uploadStatus", "error", result.segmentation_error || result.message || "裂缝检测失败");
-            setGlobalStatus("error", result.segmentation_error || result.message || "裂缝检测失败");
+        if (response.status === 422) {
+            renderBundleQualityResults(result.results || [], true);
+            setStatus("uploadStatus", "warning", result.message || "三张图中存在质量未通过的照片。");
+            setGlobalStatus("warning", result.message || "三张图中存在质量未通过的照片。");
             return;
         }
 
-        renderUploadResult(result);
+        if (!response.ok) {
+            renderBundleQualityResults(result.results || []);
+            if (result.results?.length) {
+                renderBatchUploadResult(result.results);
+            }
+            setStatus("uploadStatus", "error", result.message || "批量上传失败。");
+            setGlobalStatus("error", result.message || "批量上传失败。");
+            return;
+        }
+
+        renderBundleQualityResults(result.results || []);
+        renderBatchUploadResult(result.results || []);
         if (currentHouseId) {
             await loadHouseDetections(currentHouseId);
         }
-        setStatus("uploadStatus", "success", "裂缝检测完成，结果已显示在下方。");
-        setGlobalStatus("success", "裂缝检测完成，结果已显示在页面下方。");
+        setStatus("uploadStatus", "success", "三张图像检测完成，结果已更新到页面下方。");
+        setGlobalStatus("success", "长景 / 中景 / 近景三张图像均已完成批量检测。");
     } catch (error) {
-        setStatus("uploadStatus", "error", `上传失败: ${error}`);
-        setGlobalStatus("error", `上传失败: ${error}`);
+        setStatus("uploadStatus", "error", `批量上传失败：${error}`);
+        setGlobalStatus("error", `批量上传失败：${error}`);
     } finally {
-        setButtonState("uploadButton", false, "上传图片");
+        setButtonState("uploadButton", false, "上传长景/中景/近景并分析");
     }
 }
 
 async function deleteDetection(recordId) {
-    if (!confirm("确认删除这条检测记录吗？")) {
+    if (!window.confirm("确认删除这条检测记录吗？")) {
         return;
     }
 
     setGlobalStatus("loading", "正在删除检测记录...");
-
     try {
-        const response = await fetch(`/detections/${recordId}`, {
-            method: "DELETE"
-        });
-        const result = await response.json();
-
+        const response = await fetch(`/detections/${recordId}`, { method: "DELETE" });
+        const result = await parseResponsePayload(response);
         if (!response.ok) {
-            setGlobalStatus("error", result.message || "删除检测记录失败");
+            setGlobalStatus("error", result.message || "删除记录失败。");
             return;
         }
 
@@ -314,29 +608,28 @@ async function deleteDetection(recordId) {
         }
         setGlobalStatus("success", "检测记录已删除。");
     } catch (error) {
-        setGlobalStatus("error", `删除检测记录失败: ${error}`);
+        setGlobalStatus("error", `删除记录失败：${error}`);
     }
 }
 
 async function rerunDetection(recordId) {
-    setGlobalStatus("loading", "正在重新执行裂缝检测，请等待...");
-
+    setGlobalStatus("loading", "正在重新执行裂缝分析，请稍候...");
     try {
-        const response = await fetch(`/detections/${recordId}/rerun`, {
-            method: "POST"
-        });
-        const result = await response.json();
-
+        const response = await fetch(`/detections/${recordId}/rerun`, { method: "POST" });
+        const result = await parseResponsePayload(response);
         if (!response.ok) {
-            setGlobalStatus("error", result.segmentation_error || result.message || "重新检测失败");
+            setGlobalStatus("error", result.segmentation_error || result.message || "重新分析失败。");
             return;
         }
 
         if (currentHouseId) {
             await loadHouseDetections(currentHouseId);
         }
-        setGlobalStatus("success", "重新检测完成，历史记录已更新。");
+        setGlobalStatus("success", "重新分析完成，历史记录已刷新。");
     } catch (error) {
-        setGlobalStatus("error", `重新检测失败: ${error}`);
+        setGlobalStatus("error", `重新分析失败：${error}`);
     }
 }
+
+updateHouseBinding(null, "");
+updateBundleSizeSummary();
