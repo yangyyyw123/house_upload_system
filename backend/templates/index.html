@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260331-qc-risk-trend-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260331-quant-stage-1') }}">
 </head>
 <body>
     <main class="page">
@@ -23,6 +23,7 @@
                     <li>上传前图像质量预检</li>
                     <li>长景 / 中景 / 近景拍摄标注</li>
                     <li>风险等级与处置建议</li>
+                    <li>靶标识别与毫米级量化</li>
                     <li>房屋历史检测趋势追踪</li>
                 </ul>
             </div>
@@ -126,7 +127,7 @@
                     <p class="section-kicker">Step 3</p>
                     <h2>上传与分析</h2>
                 </div>
-                <p class="section-note">系统会先做图像质量预检，再决定是否建议补拍。</p>
+                <p class="section-note">系统会先完成识别阶段，再进入量化阶段，并根据是否识别到靶标决定能否输出 mm 级指标。</p>
             </div>
 
             <form id="uploadForm" class="form-grid" enctype="multipart/form-data">
@@ -207,7 +208,7 @@
                 <div class="action-row">
                     <button id="uploadButton" type="button" onclick="uploadPhoto()">上传长景/中景/近景并分析</button>
                     <p class="hint">
-                        当前会把三张图像作为同一批次上传，总请求大小上限为 100MB。现阶段系统不会校验二维码靶标是否存在，只做图像质量预检和裂缝分割。
+                        当前会把三张图像作为同一批次上传，总请求大小上限为 100MB。系统会先做识别阶段，再做量化阶段；若未识别到靶标，仍会给出像素级量化结果。
                     </p>
                 </div>
                 <p id="uploadStatus" class="status status-idle">等待上传长景 / 中景 / 近景三张图像。</p>
@@ -220,8 +221,9 @@
                     <p class="section-kicker">Step 4</p>
                     <h2>检测结果</h2>
                 </div>
-                <p class="section-note">这里会显示长景 / 中景 / 近景三张图各自的质量结论、风险提示和分割结果。</p>
+                <p class="section-note">这里会显示长景 / 中景 / 近景三张图各自的识别阶段、量化阶段、风险结论和统计图。</p>
             </div>
+            <div id="batchBundleActions" class="report-actions hidden"></div>
             <div id="batchResultList" class="batch-result-list"></div>
         </section>
 
@@ -242,6 +244,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', filename='script.js', v='20260331-qc-risk-trend-1') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v='20260331-quant-stage-1') }}"></script>
 </body>
 </html>

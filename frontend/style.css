@@ -549,6 +549,77 @@ button:disabled {
     margin-bottom: 16px;
 }
 
+.stage-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.stage-card {
+    padding: 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(20, 58, 92, 0.1);
+    background: #f8fbfc;
+}
+
+.stage-kicker {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.stage-card strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 20px;
+}
+
+.stage-card p,
+.stage-meta {
+    color: var(--muted);
+}
+
+.stage-meta {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.quant-note-card {
+    margin-bottom: 16px;
+}
+
+.quant-table {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.quant-table div {
+    padding: 16px;
+    border-radius: 16px;
+    background: #f8fbfc;
+    border: 1px solid rgba(20, 58, 92, 0.08);
+}
+
+.quant-table span {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.quant-table strong {
+    display: block;
+    margin-top: 10px;
+    font-size: 18px;
+    line-height: 1.5;
+}
+
 .result-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     margin-bottom: 16px;
@@ -653,6 +724,8 @@ button:disabled {
     .batch-result-list,
     .guidance-grid,
     .summary-grid,
+    .stage-grid,
+    .quant-table,
     .result-grid,
     .result-notes,
     .quality-metrics,

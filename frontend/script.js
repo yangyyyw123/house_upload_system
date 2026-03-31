@@ -257,16 +257,70 @@ function renderBundleQualityResults(results, rejected = false) {
     setVisible("overrideUploadButton", rejected);
 }
 
+function formatMetricValue(mmValue, pxValue, unitLabel = "") {
+    if (mmValue !== null && mmValue !== undefined) {
+        return `${Number(mmValue).toFixed(3)} mm${unitLabel}`;
+    }
+    if (pxValue !== null && pxValue !== undefined) {
+        return `${Number(pxValue).toFixed(3)} px${unitLabel}`;
+    }
+    return "-";
+}
+
+function buildStageCards(stages = {}) {
+    const recognition = stages.recognition || {};
+    const quantification = stages.quantification || {};
+    return `
+        <div class="stage-grid">
+            <article class="stage-card">
+                <span class="stage-kicker">识别阶段</span>
+                <strong>${escapeHtml(recognition.status || "-")}</strong>
+                <p>${escapeHtml(recognition.summary || "暂无识别阶段说明。")}</p>
+                <span class="stage-meta">${escapeHtml(recognition.physical_scale || "未建立物理比例")}</span>
+            </article>
+            <article class="stage-card">
+                <span class="stage-kicker">量化阶段</span>
+                <strong>${escapeHtml(quantification.status || "-")}</strong>
+                <p>${escapeHtml(quantification.summary || "暂无量化阶段说明。")}</p>
+            </article>
+        </div>
+    `;
+}
+
+function buildQuantificationTable(markerDetection = {}, quantification = {}) {
+    return `
+        <div class="quant-table">
+            <div><span>靶标数量</span><strong>${escapeHtml(markerDetection.marker_count ?? "-")}</strong></div>
+            <div><span>mm/pixel</span><strong>${markerDetection.physical_scale_mm_per_pixel ? escapeHtml(Number(markerDetection.physical_scale_mm_per_pixel).toFixed(6)) : "-"}</strong></div>
+            <div><span>最大宽度</span><strong>${escapeHtml(formatMetricValue(quantification.max_width_mm, quantification.max_width_px))}</strong></div>
+            <div><span>平均宽度</span><strong>${escapeHtml(formatMetricValue(quantification.avg_width_mm, quantification.avg_width_px))}</strong></div>
+            <div><span>中位宽度</span><strong>${escapeHtml(formatMetricValue(quantification.median_width_mm, quantification.median_width_px))}</strong></div>
+            <div><span>裂缝长度</span><strong>${escapeHtml(formatMetricValue(quantification.crack_length_mm, quantification.crack_length_px))}</strong></div>
+            <div><span>裂缝角度</span><strong>${quantification.crack_angle_deg !== null && quantification.crack_angle_deg !== undefined ? `${escapeHtml(Number(quantification.crack_angle_deg).toFixed(2))} deg` : "-"}</strong></div>
+            <div><span>样本点数</span><strong>${escapeHtml(quantification.sample_count ?? "-")}</strong></div>
+        </div>
+    `;
+}
+
+function buildResultMediaCard(title, url, emptyText) {
+    return `
+        <article class="result-card">
+            <h3>${escapeHtml(title)}</h3>
+            ${url ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(title)}">` : `<div class="result-placeholder">${escapeHtml(emptyText)}</div>`}
+            ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开图像</a>` : ""}
+        </article>
+    `;
+}
+
 function buildResultCard(item) {
     const quality = item.quality_report || {};
     const risk = item.risk_assessment || {};
+    const markerDetection = item.marker_detection || {};
+    const quantification = item.quantification || {};
+    const analysisStages = item.analysis_stages || {};
     const reportLink = item.report_url
         ? `<a class="button-link compact-link" href="${escapeHtml(item.report_url)}" target="_blank" rel="noopener noreferrer">下载报告</a>`
         : "";
-    const sourceLink = item.file_url ? `<a href="${escapeHtml(item.file_url)}" target="_blank" rel="noopener noreferrer">原图</a>` : "";
-    const maskLink = item.segmentation?.mask_url ? `<a href="${escapeHtml(item.segmentation.mask_url)}" target="_blank" rel="noopener noreferrer">掩码</a>` : "";
-    const overlayLink = item.segmentation?.overlay_url ? `<a href="${escapeHtml(item.segmentation.overlay_url)}" target="_blank" rel="noopener noreferrer">叠加图</a>` : "";
-
     return `
         <article class="batch-result-card">
             <div class="batch-result-head">
@@ -304,25 +358,22 @@ function buildResultCard(item) {
                     <p>${escapeHtml(risk.risk_summary || item.segmentation_error || item.message || "-")}</p>
                 </article>
             </div>
+            ${buildStageCards(analysisStages)}
+            <article class="note-card quant-note-card">
+                <h3>量化阶段说明</h3>
+                <p>${escapeHtml(quantification.message || "当前暂无量化说明。")}</p>
+            </article>
+            ${buildQuantificationTable(markerDetection, quantification)}
             <div class="report-actions">
                 ${reportLink}
             </div>
             <div class="result-grid">
-                <article class="result-card">
-                    <h3>原图</h3>
-                    ${item.file_url ? `<img src="${escapeHtml(item.file_url)}" alt="原图预览">` : '<div class="result-placeholder">无原图</div>'}
-                    ${sourceLink}
-                </article>
-                <article class="result-card">
-                    <h3>裂缝掩码</h3>
-                    ${item.segmentation?.mask_url ? `<img src="${escapeHtml(item.segmentation.mask_url)}" alt="掩码预览">` : '<div class="result-placeholder">无掩码</div>'}
-                    ${maskLink}
-                </article>
-                <article class="result-card">
-                    <h3>叠加结果</h3>
-                    ${item.segmentation?.overlay_url ? `<img src="${escapeHtml(item.segmentation.overlay_url)}" alt="叠加图预览">` : '<div class="result-placeholder">无叠加图</div>'}
-                    ${overlayLink}
-                </article>
+                ${buildResultMediaCard("原图", item.file_url, "无原图")}
+                ${buildResultMediaCard("裂缝掩码", item.segmentation?.mask_url, "无掩码")}
+                ${buildResultMediaCard("识别叠加图", item.segmentation?.overlay_url, "无识别图")}
+                ${buildResultMediaCard("靶标识别图", markerDetection.annotated_image_url, "未生成靶标图")}
+                ${buildResultMediaCard("量化叠加图", quantification.quant_overlay_url, "未生成量化图")}
+                ${buildResultMediaCard("宽度统计图", quantification.width_chart_url, "未生成统计图")}
             </div>
             <dl class="result-meta">
                 <div>
@@ -341,14 +392,35 @@ function buildResultCard(item) {
                     <dt>切块数量</dt>
                     <dd>${escapeHtml(item.segmentation?.patch_count ?? "-")}</dd>
                 </div>
+                <div>
+                    <dt>靶标状态</dt>
+                    <dd>${escapeHtml(markerDetection.status || "-")}</dd>
+                </div>
+                <div>
+                    <dt>量化状态</dt>
+                    <dd>${escapeHtml(quantification.status || "-")}</dd>
+                </div>
             </dl>
         </article>
     `;
 }
 
-function renderBatchUploadResult(results) {
+function renderBatchUploadResult(payload) {
+    const results = payload.results || [];
     const list = document.getElementById("batchResultList");
     list.innerHTML = results.map(buildResultCard).join("");
+    const batchBundleActions = document.getElementById("batchBundleActions");
+    if (payload.bundle_report_url) {
+        batchBundleActions.innerHTML = `
+            <a class="button-link" href="${escapeHtml(payload.bundle_report_url)}" target="_blank" rel="noopener noreferrer">
+                下载三景总报告
+            </a>
+        `;
+        setVisible("batchBundleActions", true);
+    } else {
+        batchBundleActions.innerHTML = "";
+        setVisible("batchBundleActions", false);
+    }
     setVisible("uploadResult", true);
 }
 
@@ -378,6 +450,9 @@ function renderHistory(records) {
     records.forEach((record) => {
         const item = document.createElement("article");
         item.className = "history-item";
+        const markerDetection = record.marker_detection || {};
+        const quantification = record.quantification || {};
+        const analysisStages = record.analysis_stages || {};
         const warnings = (record.quality_warnings || [])
             .map((warning) => `<li>${escapeHtml(warning)}</li>`)
             .join("");
@@ -398,16 +473,23 @@ function renderHistory(records) {
                 <span>风险：${escapeHtml(record.risk_level || "-")}</span>
                 <span>裂缝占比：${escapeHtml(record.crack_area_ratio ?? "-")}</span>
             </div>
+            ${buildStageCards(analysisStages)}
+            ${buildQuantificationTable(markerDetection, quantification)}
             <p class="history-summary">${escapeHtml(record.risk_summary || "暂无风险说明。")}</p>
+            <p class="history-summary">${escapeHtml(quantification.message || "暂无量化说明。")}</p>
             <p class="history-summary">${escapeHtml(record.recommendation || "暂无处置建议。")}</p>
             ${warnings ? `<ul class="history-warnings">${warnings}</ul>` : ""}
             <div class="history-links">
                 ${record.source_image_url ? `<a href="${escapeHtml(record.source_image_url)}" target="_blank" rel="noopener noreferrer">原图</a>` : ""}
                 ${record.mask_url ? `<a href="${escapeHtml(record.mask_url)}" target="_blank" rel="noopener noreferrer">掩码</a>` : ""}
-                ${record.overlay_url ? `<a href="${escapeHtml(record.overlay_url)}" target="_blank" rel="noopener noreferrer">叠加图</a>` : ""}
+                ${record.overlay_url ? `<a href="${escapeHtml(record.overlay_url)}" target="_blank" rel="noopener noreferrer">识别图</a>` : ""}
+                ${markerDetection.annotated_image_url ? `<a href="${escapeHtml(markerDetection.annotated_image_url)}" target="_blank" rel="noopener noreferrer">靶标图</a>` : ""}
+                ${quantification.quant_overlay_url ? `<a href="${escapeHtml(quantification.quant_overlay_url)}" target="_blank" rel="noopener noreferrer">量化图</a>` : ""}
+                ${quantification.width_chart_url ? `<a href="${escapeHtml(quantification.width_chart_url)}" target="_blank" rel="noopener noreferrer">统计图</a>` : ""}
             </div>
             <div class="history-actions">
                 <a class="button-link compact-link" href="${escapeHtml(record.report_url || `/detections/${record.id}/report`)}" target="_blank" rel="noopener noreferrer">下载报告</a>
+                ${record.bundle_report_url ? `<a class="button-link compact-link" href="${escapeHtml(record.bundle_report_url)}" target="_blank" rel="noopener noreferrer">下载总报告</a>` : ""}
                 <button type="button" class="secondary-button" onclick="rerunDetection(${record.id})">重新分析</button>
                 <button type="button" class="danger-button" onclick="deleteDetection(${record.id})">删除记录</button>
             </div>
@@ -567,7 +649,7 @@ async function uploadPhoto(forceLowQuality = false) {
         if (!response.ok) {
             renderBundleQualityResults(result.results || []);
             if (result.results?.length) {
-                renderBatchUploadResult(result.results);
+                renderBatchUploadResult(result);
             }
             setStatus("uploadStatus", "error", result.message || "批量上传失败。");
             setGlobalStatus("error", result.message || "批量上传失败。");
@@ -575,7 +657,7 @@ async function uploadPhoto(forceLowQuality = false) {
         }
 
         renderBundleQualityResults(result.results || []);
-        renderBatchUploadResult(result.results || []);
+        renderBatchUploadResult(result);
         if (currentHouseId) {
             await loadHouseDetections(currentHouseId);
         }
