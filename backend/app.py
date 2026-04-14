@@ -14,7 +14,7 @@ from flask import Flask, jsonify, render_template, request, send_file, send_from
 from werkzeug.exceptions import RequestEntityTooLarge
 from flask_sqlalchemy import SQLAlchemy
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat, UnidentifiedImageError
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 from werkzeug.utils import secure_filename
 
 try:
@@ -85,6 +85,13 @@ RISK_ACTIONS = {
     "高风险": "建议立即停止使用相关区域，联系结构安全检测与加固单位。",
 }
 
+RISK_LEVEL_THRESHOLDS = [
+    ("无风险", 0, 1),
+    ("低风险", 2, 4),
+    ("中风险", 5, 7),
+    ("高风险", 8, None),
+]
+
 REPORT_PAGE_SIZE = (1240, 1754)
 REPORT_MARGIN = 72
 REPORT_FONT_CANDIDATES = [
@@ -97,6 +104,11 @@ BUNDLE_CAPTURE_SCALES = [
     ("medium_view", "中景"),
     ("close_view", "近景"),
 ]
+
+BUNDLE_PROJECTION_COLORS = {
+    "中景": (44, 163, 242),
+    "近景": (255, 170, 40),
+}
 
 
 def allowed_file(filename: str) -> bool:
@@ -272,10 +284,10 @@ def assess_detection_risk(
     quality_report: dict[str, object],
     metadata: dict[str, str],
     history_records: list["ImageSegmentationRecord"] | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     area_ratio = float(segmentation_result.get("crack_area_ratio") or 0.0)
-    component_type = metadata["component_type"]
-    scenario_type = metadata["scenario_type"]
+    component_type = clean_text(metadata.get("component_type"), "未标注")
+    scenario_type = clean_text(metadata.get("scenario_type"), "未标注")
     max_width_mm = quantification.get("max_width_mm")
     crack_length_mm = quantification.get("crack_length_mm")
     crack_angle_deg = quantification.get("crack_angle_deg")
@@ -284,109 +296,198 @@ def assess_detection_risk(
     length_value = float(crack_length_mm or 0.0)
 
     score = 0
-    reasons: list[str] = []
+    score_breakdown: list[dict[str, object]] = []
+    explanation_notes: list[str] = []
+
+    def add_score_item(points: int, title: str, detail: str) -> None:
+        nonlocal score
+        score += points
+        score_breakdown.append(
+            {
+                "title": title,
+                "score": points,
+                "detail": detail,
+            }
+        )
 
     if max_width_mm is not None:
         if width_value >= 1.0:
-            score += 5
-            reasons.append(f"最大宽度 {width_value:.3f} mm，已达到高风险阈值。")
+            add_score_item(5, "最大宽度", f"最大宽度 {width_value:.3f} mm，已达到高风险阈值。")
         elif width_value >= 0.6:
-            score += 4
-            reasons.append(f"最大宽度 {width_value:.3f} mm，已明显超过常规观察阈值。")
+            add_score_item(4, "最大宽度", f"最大宽度 {width_value:.3f} mm，已明显超过常规观察阈值。")
         elif width_value >= 0.3:
-            score += 2
-            reasons.append(f"最大宽度 {width_value:.3f} mm，建议重点跟踪。")
+            add_score_item(2, "最大宽度", f"最大宽度 {width_value:.3f} mm，建议重点跟踪。")
     else:
         if area_ratio >= 0.008:
-            score += 4
-            reasons.append("当前未建立毫米尺度，裂缝面积占比较高。")
+            add_score_item(4, "面积占比", "当前未建立毫米尺度，裂缝面积占比较高。")
         elif area_ratio >= 0.003:
-            score += 2
-            reasons.append("当前未建立毫米尺度，裂缝面积占比已有增长迹象。")
+            add_score_item(2, "面积占比", "当前未建立毫米尺度，裂缝面积占比已有增长迹象。")
         elif area_ratio >= 0.001:
-            score += 1
+            add_score_item(1, "面积占比", "当前未建立毫米尺度，裂缝面积占比已进入观察区间。")
 
     if crack_length_mm is not None:
         if length_value >= 800:
-            score += 3
-            reasons.append(f"裂缝长度 {length_value:.1f} mm，属于长裂缝。")
+            add_score_item(3, "裂缝长度", f"裂缝长度 {length_value:.1f} mm，属于长裂缝。")
         elif length_value >= 300:
-            score += 2
-            reasons.append(f"裂缝长度 {length_value:.1f} mm，已超过常规巡检关注阈值。")
+            add_score_item(2, "裂缝长度", f"裂缝长度 {length_value:.1f} mm，已超过常规巡检关注阈值。")
         elif length_value >= 120:
-            score += 1
+            add_score_item(1, "裂缝长度", f"裂缝长度 {length_value:.1f} mm，建议继续跟踪。")
     elif area_ratio >= 0.005:
-        score += 1
+        add_score_item(1, "面积占比", "当前未建立长度量测，裂缝面积占比较高。")
 
     if is_structural:
-        score += 2
-        reasons.append("裂缝位于承重或主要受力构件。")
+        add_score_item(2, "构件类型", "裂缝位于承重或主要受力构件。")
 
     if scenario_type == "灾后评估":
-        score += 1
-        reasons.append("当前场景为灾后评估，风险基线提高一级。")
+        add_score_item(1, "场景类型", "当前场景为灾后评估，风险基线提高一级。")
 
     if crack_angle_deg is not None and is_structural:
         angle_value = abs(float(crack_angle_deg))
         normalized_angle = min(angle_value % 180.0, 180.0 - (angle_value % 180.0))
         if 35.0 <= normalized_angle <= 65.0:
-            score += 1
-            reasons.append(f"裂缝方向 {angle_value:.1f} deg，属于结构受力敏感方向。")
+            add_score_item(1, "裂缝方向", f"裂缝方向 {angle_value:.1f} deg，属于结构受力敏感方向。")
 
     latest_previous = history_records[0] if history_records else None
-    growth_message = None
     if latest_previous is not None:
         previous_width = latest_previous.max_width_mm
         previous_length = latest_previous.crack_length_mm
         if previous_width is not None and max_width_mm is not None and previous_width > 0:
             width_growth = (width_value - float(previous_width)) / float(previous_width)
             if width_growth >= 0.5:
-                score += 2
-                growth_message = f"最大宽度较上次增长 {width_growth * 100:.1f}% 。"
+                add_score_item(2, "历史变化", f"最大宽度较上次增长 {width_growth * 100:.1f}%。")
             elif width_growth >= 0.2:
-                score += 1
-                growth_message = f"最大宽度较上次增长 {width_growth * 100:.1f}% 。"
+                add_score_item(1, "历史变化", f"最大宽度较上次增长 {width_growth * 100:.1f}%。")
         elif previous_length is not None and crack_length_mm is not None and previous_length > 0:
             length_growth = (length_value - float(previous_length)) / float(previous_length)
             if length_growth >= 0.5:
-                score += 1
-                growth_message = f"裂缝长度较上次增长 {length_growth * 100:.1f}% 。"
+                add_score_item(1, "历史变化", f"裂缝长度较上次增长 {length_growth * 100:.1f}%。")
         elif latest_previous.crack_area_ratio and area_ratio > latest_previous.crack_area_ratio:
             area_growth = (area_ratio - float(latest_previous.crack_area_ratio)) / max(float(latest_previous.crack_area_ratio), 1e-6)
             if area_growth >= 0.5:
-                score += 1
-                growth_message = f"裂缝面积占比较上次增长 {area_growth * 100:.1f}% 。"
+                add_score_item(1, "历史变化", f"裂缝面积占比较上次增长 {area_growth * 100:.1f}%。")
 
-    if score >= 8:
-        level = "高风险"
-    elif score >= 5:
-        level = "中风险"
-    elif score >= 2:
-        level = "低风险"
-    else:
-        level = "无风险"
+    level = "无风险"
+    for risk_level, min_score, _max_score in reversed(RISK_LEVEL_THRESHOLDS):
+        if score >= min_score:
+            level = risk_level
+            break
 
     summary = RISK_TEXT[level]
-    if reasons:
-        summary += " " + " ".join(reasons[:3])
-    if growth_message:
-        summary += " " + growth_message
+    summary_details = [item["detail"] for item in score_breakdown[:3]]
+    if summary_details:
+        summary += " " + " ".join(summary_details)
     recommendation = RISK_ACTIONS[level]
     if max_width_mm is not None and width_value >= 1.0 and is_structural:
         recommendation = "建议尽快安排专业结构安全检测，并限制相关承重区域继续使用。"
     elif max_width_mm is not None and width_value >= 0.3:
         recommendation = "建议在 1-2 周内复拍复核，并结合现场巡查确认是否继续扩展。"
 
-    if quality_report["status"] == "warning":
-        summary += " 当前图像质量一般，建议结合补拍结果综合判断。"
-    elif quality_report["status"] == "reject":
-        summary += " 当前图像质量较差，本次结果应优先视为补拍前的参考。"
+    if not score_breakdown:
+        explanation_notes.append("当前未触发宽度、长度、构件类型或历史增长等加分项，系统按常规观察范围处理。")
+
+    quality_status = quality_report.get("status")
+    if quality_status == "warning":
+        quality_note = "当前图像质量一般，建议结合补拍结果综合判断。"
+        explanation_notes.append(quality_note)
+        summary += " " + quality_note
+    elif quality_status == "reject":
+        quality_note = "当前图像质量较差，本次结果应优先视为补拍前的参考。"
+        explanation_notes.append(quality_note)
+        summary += " " + quality_note
 
     return {
         "risk_level": level,
+        "score": score,
         "risk_summary": summary,
         "recommendation": recommendation,
+        "score_breakdown": score_breakdown,
+        "explanation_notes": explanation_notes,
+        "level_thresholds": build_risk_level_thresholds(),
     }
+
+
+def build_record_segmentation_snapshot(record: "ImageSegmentationRecord") -> dict[str, object]:
+    return {
+        "crack_area_ratio": record.crack_area_ratio,
+    }
+
+
+def build_record_quantification_snapshot(record: "ImageSegmentationRecord") -> dict[str, object]:
+    return {
+        "max_width_mm": record.max_width_mm,
+        "crack_length_mm": record.crack_length_mm,
+        "crack_angle_deg": record.crack_angle_deg,
+    }
+
+
+def build_record_quality_snapshot(record: "ImageSegmentationRecord") -> dict[str, object]:
+    return {
+        "status": record.quality_status,
+        "score": record.quality_score,
+        "warnings": decode_json(record.quality_warnings_json, []),
+    }
+
+
+def build_record_metadata(record: "ImageSegmentationRecord") -> dict[str, str]:
+    return {
+        "component_type": clean_text(record.component_type, "未标注"),
+        "scenario_type": clean_text(record.scenario_type, "未标注"),
+    }
+
+
+def get_previous_house_record(record: "ImageSegmentationRecord") -> "ImageSegmentationRecord | None":
+    if not record.house_id:
+        return None
+
+    query = ImageSegmentationRecord.query.filter_by(house_id=record.house_id, analysis_status="completed").filter(
+        ImageSegmentationRecord.id != record.id
+    )
+    if record.created_at is not None:
+        query = query.filter(
+            or_(
+                ImageSegmentationRecord.created_at < record.created_at,
+                and_(ImageSegmentationRecord.created_at == record.created_at, ImageSegmentationRecord.id < record.id),
+            )
+        )
+    else:
+        query = query.filter(ImageSegmentationRecord.id < record.id)
+
+    return query.order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc()).first()
+
+
+def build_previous_record_lookup(
+    records: list["ImageSegmentationRecord"],
+) -> dict[int, "ImageSegmentationRecord | None"]:
+    previous_by_id: dict[int, ImageSegmentationRecord | None] = {}
+    completed_records = sorted(
+        [record for record in records if record.analysis_status == "completed"],
+        key=lambda item: (item.created_at or datetime.min, item.id or 0),
+    )
+
+    previous_record: ImageSegmentationRecord | None = None
+    for record in completed_records:
+        previous_by_id[record.id] = previous_record
+        previous_record = record
+
+    for record in records:
+        previous_by_id.setdefault(record.id, None)
+    return previous_by_id
+
+
+def build_risk_assessment_for_record(
+    record: "ImageSegmentationRecord",
+    previous_record: "ImageSegmentationRecord | None" = None,
+) -> dict[str, object]:
+    if previous_record is None:
+        previous_record = get_previous_house_record(record)
+
+    return assess_detection_risk(
+        segmentation_result=build_record_segmentation_snapshot(record),
+        quantification=build_record_quantification_snapshot(record),
+        quality_report=build_record_quality_snapshot(record),
+        metadata=build_record_metadata(record),
+        history_records=[previous_record] if previous_record else [],
+    )
 
 
 def get_record_trend_metric(record: "ImageSegmentationRecord") -> tuple[str, float]:
@@ -514,6 +615,329 @@ def run_quantification_analysis(
         return build_empty_quantification_result(f"量化阶段异常：{exc}")
 
 
+def build_bundle_projection_unavailable(message: str) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "message": message,
+        "overview_image_url": None,
+        "projected_items": [],
+        "component_bbox": None,
+    }
+
+
+def collect_bundle_projection_inputs_from_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for result in results:
+        source_path = result.get("file_path")
+        segmentation = result.get("segmentation") or {}
+        mask_path = segmentation.get("mask_path")
+        items.append(
+            {
+                "capture_scale": clean_text(result.get("capture_scale"), "未标注"),
+                "detection_code": clean_text(result.get("detection_code"), "-"),
+                "source_image_path": Path(str(source_path)) if source_path else None,
+                "mask_path": Path(str(mask_path)) if mask_path else None,
+            }
+        )
+    return items
+
+
+def collect_bundle_projection_inputs_from_records(records: list["ImageSegmentationRecord"]) -> list[dict[str, object]]:
+    return [
+        {
+            "capture_scale": clean_text(record.capture_scale, "未标注"),
+            "detection_code": clean_text(record.detection_code, f"record-{record.id}"),
+            "source_image_path": Path(record.source_image_path) if record.source_image_path else None,
+            "mask_path": Path(record.mask_path) if record.mask_path else None,
+        }
+        for record in records
+    ]
+
+
+def load_projection_mask_contours(mask_path: Path | None) -> list[np.ndarray]:
+    if mask_path is None or not mask_path.exists():
+        return []
+
+    mask_image = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if mask_image is None:
+        return []
+
+    binary_mask = ((mask_image > 127).astype(np.uint8)) * 255
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kept: list[np.ndarray] = []
+    for contour in contours:
+        if cv2.contourArea(contour) < 24:
+            continue
+        kept.append(contour.reshape(-1, 2).astype(np.float32))
+    kept.sort(key=lambda item: cv2.contourArea(item.reshape(-1, 1, 2)), reverse=True)
+    return kept[:24]
+
+
+def build_bundle_projection_context(item: dict[str, object]) -> dict[str, object] | None:
+    source_image_path = item.get("source_image_path")
+    if not isinstance(source_image_path, Path) or not source_image_path.exists():
+        return None
+
+    source_image = cv2.imread(str(source_image_path))
+    if source_image is None:
+        return None
+
+    marker_detection = quantification_service.inspect_target_image(source_image, include_geometry=True)
+    targets = marker_detection.get("targets") or []
+    projection_target = next(
+        (
+            target
+            for target in targets
+            if target.get("image_to_target_matrix") is not None and target.get("target_to_image_matrix") is not None
+        ),
+        None,
+    )
+    target_key = clean_text(
+        (projection_target or {}).get("target_id") or (projection_target or {}).get("house_number"),
+        "",
+    )
+
+    return {
+        "capture_scale": item.get("capture_scale"),
+        "detection_code": item.get("detection_code"),
+        "source_image_path": source_image_path,
+        "mask_path": item.get("mask_path"),
+        "image": source_image,
+        "marker_detection": marker_detection,
+        "projection_target": projection_target,
+        "target_key": target_key,
+        "mask_contours": load_projection_mask_contours(item.get("mask_path") if isinstance(item.get("mask_path"), Path) else None),
+    }
+
+
+def project_contours_to_long_view(
+    contours: list[np.ndarray],
+    source_target: dict[str, object],
+    long_target: dict[str, object],
+    long_image_shape: tuple[int, ...],
+) -> list[np.ndarray]:
+    if not contours:
+        return []
+
+    source_to_target = np.asarray(source_target.get("image_to_target_matrix"), dtype=np.float32)
+    target_to_long = np.asarray(long_target.get("target_to_image_matrix"), dtype=np.float32)
+    if source_to_target.shape != (3, 3) or target_to_long.shape != (3, 3):
+        return []
+
+    long_height, long_width = long_image_shape[:2]
+    projected: list[np.ndarray] = []
+    for contour in contours:
+        if contour.shape[0] < 3:
+            continue
+        source_points = contour.reshape(1, -1, 2).astype(np.float32)
+        target_points = cv2.perspectiveTransform(source_points, source_to_target)
+        long_points = cv2.perspectiveTransform(target_points, target_to_long).reshape(-1, 2)
+        if not np.isfinite(long_points).all():
+            continue
+
+        long_points[:, 0] = np.clip(long_points[:, 0], -long_width, long_width * 2.0)
+        long_points[:, 1] = np.clip(long_points[:, 1], -long_height, long_height * 2.0)
+        min_x = float(long_points[:, 0].min())
+        min_y = float(long_points[:, 1].min())
+        max_x = float(long_points[:, 0].max())
+        max_y = float(long_points[:, 1].max())
+        if max_x < -48 or max_y < -48 or min_x > long_width + 48 or min_y > long_height + 48:
+            continue
+        projected.append(long_points.astype(np.float32))
+    return projected
+
+
+def compute_projection_bbox(contours: list[np.ndarray], image_shape: tuple[int, ...]) -> dict[str, int] | None:
+    if not contours:
+        return None
+
+    all_points = np.concatenate(contours, axis=0)
+    image_height, image_width = image_shape[:2]
+    min_x = float(all_points[:, 0].min())
+    min_y = float(all_points[:, 1].min())
+    max_x = float(all_points[:, 0].max())
+    max_y = float(all_points[:, 1].max())
+
+    pad_x = max(36, int(round(max(max_x - min_x, 1.0) * 0.18)))
+    pad_y = max(36, int(round(max(max_y - min_y, 1.0) * 0.18)))
+    left = max(0, int(math.floor(min_x - pad_x)))
+    top = max(0, int(math.floor(min_y - pad_y)))
+    right = min(image_width - 1, int(math.ceil(max_x + pad_x)))
+    bottom = min(image_height - 1, int(math.ceil(max_y + pad_y)))
+    if right <= left or bottom <= top:
+        return None
+    return {
+        "x": left,
+        "y": top,
+        "width": right - left,
+        "height": bottom - top,
+    }
+
+
+def draw_bundle_projection_overlay(
+    long_context: dict[str, object],
+    projected_items: list[dict[str, object]],
+    component_bbox: dict[str, int] | None,
+    output_path: Path,
+) -> None:
+    base_image = np.asarray(long_context["image"]).copy()
+    tint_layer = base_image.copy()
+
+    long_target = long_context.get("projection_target") or {}
+    long_contour = np.asarray(long_target.get("contour") or [], dtype=np.float32).reshape(-1, 2)
+    if long_contour.shape[0] >= 4:
+        long_target_contour = np.round(long_contour).astype(np.int32).reshape(-1, 1, 2)
+        cv2.polylines(base_image, [long_target_contour], True, (92, 214, 178), 2, cv2.LINE_AA)
+        anchor_x, anchor_y = tuple(long_target_contour[0][0])
+        cv2.putText(
+            base_image,
+            "TARGET",
+            (int(anchor_x), max(28, int(anchor_y) - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.72,
+            (92, 214, 178),
+            2,
+            cv2.LINE_AA,
+        )
+
+    scale_labels = {"中景": "MID", "近景": "CLOSE"}
+    for item in projected_items:
+        color = BUNDLE_PROJECTION_COLORS.get(str(item["capture_scale"]), (44, 163, 242))
+        contour_arrays = item.get("projected_contours") or []
+        for contour in contour_arrays:
+            contour_array = np.round(np.asarray(contour, dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
+            if contour_array.shape[0] < 3:
+                continue
+            cv2.fillPoly(tint_layer, [contour_array], color)
+            cv2.polylines(base_image, [contour_array], True, color, 2, cv2.LINE_AA)
+
+        centroid = item.get("centroid")
+        if isinstance(centroid, (list, tuple)) and len(centroid) == 2:
+            cv2.putText(
+                base_image,
+                scale_labels.get(str(item["capture_scale"]), "VIEW"),
+                (int(centroid[0]) + 8, max(24, int(centroid[1]) - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+
+    overlay = cv2.addWeighted(tint_layer, 0.2, base_image, 0.8, 0.0)
+    if component_bbox:
+        x = int(component_bbox["x"])
+        y = int(component_bbox["y"])
+        w = int(component_bbox["width"])
+        h = int(component_bbox["height"])
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (56, 128, 78), 3, cv2.LINE_AA)
+        cv2.putText(
+            overlay,
+            "FOCUS BOX",
+            (x + 8, max(30, y - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.78,
+            (56, 128, 78),
+            2,
+            cv2.LINE_AA,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(output_path), overlay)
+
+
+def build_bundle_projection_from_inputs(items: list[dict[str, object]], bundle_code: str) -> dict[str, object]:
+    if not items:
+        return build_bundle_projection_unavailable("当前批次暂无可用于构件回投的图像。")
+
+    contexts = [context for item in items if (context := build_bundle_projection_context(item)) is not None]
+    if not contexts:
+        return build_bundle_projection_unavailable("当前批次图像无法读取，未生成长景回投结果。")
+
+    context_by_scale = {str(context["capture_scale"]): context for context in contexts}
+    long_context = context_by_scale.get("长景")
+    if long_context is None:
+        return build_bundle_projection_unavailable("缺少长景图像，无法生成构件框选结果。")
+
+    long_target = long_context.get("projection_target")
+    if not long_target or not long_context.get("target_key"):
+        return build_bundle_projection_unavailable("长景图像未识别到可用于定位的二维码靶标，无法回投中近景结果。")
+
+    long_target_key = str(long_context["target_key"])
+    projected_items: list[dict[str, object]] = []
+    all_projected_contours: list[np.ndarray] = []
+    for scale in ("中景", "近景"):
+        source_context = context_by_scale.get(scale)
+        if source_context is None:
+            continue
+        if not source_context.get("projection_target") or source_context.get("target_key") != long_target_key:
+            continue
+
+        projected_contours = project_contours_to_long_view(
+            contours=source_context.get("mask_contours") or [],
+            source_target=source_context["projection_target"],
+            long_target=long_target,
+            long_image_shape=np.asarray(long_context["image"]).shape,
+        )
+        if not projected_contours:
+            continue
+
+        projected_points = np.concatenate(projected_contours, axis=0)
+        contour_bbox = compute_projection_bbox(projected_contours, np.asarray(long_context["image"]).shape)
+        centroid = [
+            round(float(projected_points[:, 0].mean()), 1),
+            round(float(projected_points[:, 1].mean()), 1),
+        ]
+        projected_items.append(
+            {
+                "capture_scale": scale,
+                "detection_code": source_context.get("detection_code"),
+                "target_id": source_context["projection_target"].get("target_id"),
+                "projected_contours": projected_contours,
+                "projected_contour_count": len(projected_contours),
+                "centroid": centroid,
+                "bbox": contour_bbox,
+            }
+        )
+        all_projected_contours.extend(projected_contours)
+
+    if not projected_items:
+        return build_bundle_projection_unavailable("未找到与长景同一靶标的中景/近景有效结果，暂无法完成回投。")
+
+    component_bbox = compute_projection_bbox(all_projected_contours, np.asarray(long_context["image"]).shape)
+    output_path = SEGMENTATION_ROOT / bundle_code / f"{bundle_code}_long_projection.png"
+    draw_bundle_projection_overlay(long_context, projected_items, component_bbox, output_path)
+
+    matched_scales = "、".join(item["capture_scale"] for item in projected_items)
+    return {
+        "status": "completed",
+        "message": f"已将{matched_scales}裂缝结果回投到长景图像，并生成构件关注框。",
+        "overview_image_url": build_file_url(output_path),
+        "projected_items": [
+            {
+                "capture_scale": item["capture_scale"],
+                "detection_code": item["detection_code"],
+                "target_id": item["target_id"],
+                "projected_contour_count": item["projected_contour_count"],
+                "bbox": item["bbox"],
+            }
+            for item in projected_items
+        ],
+        "component_bbox": component_bbox,
+    }
+
+
+def build_bundle_projection_from_results(results: list[dict[str, object]], bundle_code: str) -> dict[str, object]:
+    return build_bundle_projection_from_inputs(collect_bundle_projection_inputs_from_results(results), bundle_code)
+
+
+def build_bundle_projection_from_records(
+    records: list["ImageSegmentationRecord"],
+    bundle_code: str,
+) -> dict[str, object]:
+    return build_bundle_projection_from_inputs(collect_bundle_projection_inputs_from_records(records), bundle_code)
+
+
 def build_trend_summary(records: list["ImageSegmentationRecord"]) -> dict[str, object]:
     usable_records = [
         record
@@ -585,11 +1009,24 @@ def draw_wrapped_text(
 ) -> int:
     x, y = position
     chars_per_line = max(8, max_width // max(font.size if hasattr(font, "size") else 12, 12))
-    wrapped_lines = textwrap.wrap(text, width=chars_per_line) or [text]
+    wrapped_lines: list[str] = []
+    for paragraph in str(text).splitlines() or [str(text)]:
+        wrapped_lines.extend(textwrap.wrap(paragraph, width=chars_per_line) or [""])
     for line in wrapped_lines:
         draw.text((x, y), line, fill=fill, font=font)
         y += font.size + line_spacing if hasattr(font, "size") else 22
     return y
+
+
+def build_risk_level_thresholds() -> list[dict[str, object]]:
+    return [
+        {
+            "risk_level": risk_level,
+            "min_score": min_score,
+            "max_score": max_score,
+        }
+        for risk_level, min_score, max_score in RISK_LEVEL_THRESHOLDS
+    ]
 
 
 def add_report_header(
@@ -942,6 +1379,35 @@ def format_metric_value(mm_value: float | None, px_value: float | None, suffix: 
     return "-"
 
 
+def format_risk_threshold_text(risk_assessment: dict[str, object]) -> str:
+    thresholds = risk_assessment.get("level_thresholds") or []
+    parts = []
+    for item in thresholds:
+        min_score = item.get("min_score")
+        max_score = item.get("max_score")
+        range_text = f"{min_score}+" if max_score is None else f"{min_score}-{max_score}"
+        parts.append(f"{item.get('risk_level', '-')} {range_text} 分")
+    return " / ".join(parts)
+
+
+def build_report_risk_detail_text(risk_assessment: dict[str, object]) -> str:
+    lines = [f"摘要：{risk_assessment.get('risk_summary') or '暂无风险说明。'}"]
+    score_breakdown = risk_assessment.get("score_breakdown") or []
+    if score_breakdown:
+        for item in score_breakdown[:5]:
+            lines.append(f"+{item.get('score', 0)} 分｜{item.get('detail', '-')}")
+    else:
+        lines.append("评分依据：本次未触发宽度、长度、构件类型或历史增长等加分项。")
+
+    for note in (risk_assessment.get("explanation_notes") or [])[:2]:
+        lines.append(f"附注：{note}")
+
+    threshold_text = format_risk_threshold_text(risk_assessment)
+    if threshold_text:
+        lines.append(f"分级阈值：{threshold_text}")
+    return "\n".join(lines)
+
+
 def add_quantification_visual_page(record: "ImageSegmentationRecord") -> Image.Image:
     canvas = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(canvas)
@@ -1012,6 +1478,7 @@ def build_report_pages(
     generated_at: datetime,
 ) -> list[Image.Image]:
     history_records = get_house_history_records(record.house_id, limit=5) if record.house_id else []
+    risk_assessment = build_risk_assessment_for_record(record)
 
     page_one = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page_one)
@@ -1044,18 +1511,31 @@ def build_report_pages(
         draw,
         [
             ("质量状态", f"{record.quality_status or '-'} / {record.quality_score or '-'}"),
-            ("风险等级", record.risk_level or "待人工复核"),
+            ("风险等级", risk_assessment["risk_level"] or "待人工复核"),
+            ("风险评分", f"{risk_assessment['score']} 分"),
             ("最大宽度", format_metric_value(record.max_width_mm, record.max_width_px)),
             ("裂缝长度", format_metric_value(record.crack_length_mm, record.crack_length_px)),
         ],
         current_y,
-        columns=2,
+        columns=3,
     )
 
     current_y += 18
-    current_y = add_paragraph_card(draw, "风险说明", record.risk_summary or "暂无风险说明。", current_y)
+    current_y = add_paragraph_card(
+        draw,
+        "风险说明与评分依据",
+        build_report_risk_detail_text(risk_assessment),
+        current_y,
+        height=242,
+    )
     current_y += 14
-    current_y = add_paragraph_card(draw, "处置建议", record.recommendation or "暂无处置建议。", current_y)
+    current_y = add_paragraph_card(
+        draw,
+        "处置建议",
+        risk_assessment["recommendation"] or "暂无处置建议。",
+        current_y,
+        height=122,
+    )
 
     page_two = add_recognition_visual_page(record)
     draw_two = ImageDraw.Draw(page_two)
@@ -1336,6 +1816,74 @@ def build_bundle_summary_page(
     return page
 
 
+def build_bundle_projection_page(
+    bundle_projection: dict[str, object],
+    generated_at: datetime,
+    page_index: int,
+) -> Image.Image:
+    page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
+    draw = ImageDraw.Draw(page)
+    title_font = load_report_font(44, bold=True)
+    body_font = load_report_font(24)
+    caption_font = load_report_font(24, bold=True)
+    current_y = add_report_header(draw, title_font, body_font, page_index)
+    current_y = add_section_title(draw, "三、长景构件框选与中近景回投", current_y)
+    current_y = add_key_value_block(
+        draw,
+        [
+            ("生成时间", format_datetime_value(generated_at)),
+            ("回投状态", "已生成" if bundle_projection.get("status") == "completed" else "未生成"),
+            ("回投尺度", "、".join(item["capture_scale"] for item in bundle_projection.get("projected_items", [])) or "-"),
+            (
+                "关注框",
+                (
+                    f"x={bundle_projection['component_bbox']['x']} y={bundle_projection['component_bbox']['y']} "
+                    f"w={bundle_projection['component_bbox']['width']} h={bundle_projection['component_bbox']['height']}"
+                )
+                if bundle_projection.get("component_bbox")
+                else "-",
+            ),
+        ],
+        current_y,
+        columns=2,
+    )
+    current_y += 18
+    current_y = add_paragraph_card(
+        draw,
+        "回投说明",
+        bundle_projection.get("message") or "当前批次未生成长景构件回投结果。",
+        current_y,
+        height=132,
+    )
+    current_y += 18
+
+    image_path = None
+    image_url = bundle_projection.get("overview_image_url")
+    if image_url and image_url.startswith("/files/"):
+        image_path = UPLOAD_ROOT / image_url.replace("/files/", "", 1)
+
+    draw.rounded_rectangle(
+        (REPORT_MARGIN, current_y, REPORT_PAGE_SIZE[0] - REPORT_MARGIN, current_y + 760),
+        radius=18,
+        fill="#F8FBFC",
+        outline="#D8E6E6",
+    )
+    draw.text((REPORT_MARGIN + 20, current_y + 18), "长景回投总览图", fill="#183042", font=caption_font)
+    image_box = (REPORT_MARGIN + 20, current_y + 62, REPORT_PAGE_SIZE[0] - REPORT_MARGIN - 20, current_y + 720)
+    if image_path and image_path.exists():
+        with Image.open(image_path) as projection_image:
+            thumbnail = ImageOps.exif_transpose(projection_image).convert("RGB")
+            thumbnail.thumbnail((image_box[2] - image_box[0], image_box[3] - image_box[1]))
+            paste_x = image_box[0] + (image_box[2] - image_box[0] - thumbnail.width) // 2
+            paste_y = image_box[1] + (image_box[3] - image_box[1] - thumbnail.height) // 2
+            page.paste(thumbnail, (paste_x, paste_y))
+    else:
+        draw.rounded_rectangle(image_box, radius=12, fill="#FFFFFF", outline="#D8E6E6")
+        draw.text((image_box[0] + 24, image_box[1] + 180), "当前无可用回投图像", fill="#7A8F9C", font=body_font)
+
+    return page
+
+
 def build_bundle_record_page(
     record: "ImageSegmentationRecord",
     page_index: int,
@@ -1403,7 +1951,14 @@ def build_bundle_report_pdf(
 ) -> BytesIO:
     generated_at = datetime.now().astimezone()
     pages: list[Image.Image] = [build_bundle_summary_page(records, house, bundle_code, generated_at)]
-    for index, record in enumerate(records, start=2):
+    try:
+        bundle_projection = build_bundle_projection_from_records(records, bundle_code)
+    except Exception:  # pragma: no cover
+        bundle_projection = build_bundle_projection_unavailable("长景构件回投生成失败。")
+    if bundle_projection.get("status") == "completed":
+        pages.append(build_bundle_projection_page(bundle_projection, generated_at, len(pages) + 1))
+
+    for index, record in enumerate(records, start=len(pages) + 1):
         pages.append(build_bundle_record_page(record, index, generated_at))
 
     buffer = BytesIO()
@@ -1579,7 +2134,11 @@ def ensure_sqlite_columns() -> None:
             )
 
 
-def serialize_segmentation_record(record: ImageSegmentationRecord) -> dict:
+def serialize_segmentation_record(
+    record: ImageSegmentationRecord,
+    previous_record: "ImageSegmentationRecord | None" = None,
+    risk_assessment: dict[str, object] | None = None,
+) -> dict:
     marker_status = record.marker_status
     if marker_status == "anchor_rectified":
         detection_method = "qr_anchor_rectified"
@@ -1620,6 +2179,8 @@ def serialize_segmentation_record(record: ImageSegmentationRecord) -> dict:
         "quant_overlay_url": build_file_url(Path(record.quant_overlay_path)) if record.quant_overlay_path else None,
         "width_chart_url": build_file_url(Path(record.width_chart_path)) if record.width_chart_path else None,
     }
+    if risk_assessment is None:
+        risk_assessment = build_risk_assessment_for_record(record, previous_record=previous_record)
     return {
         "id": record.id,
         "house_id": record.house_id,
@@ -1644,9 +2205,11 @@ def serialize_segmentation_record(record: ImageSegmentationRecord) -> dict:
         "quality_score": record.quality_score,
         "quality_status": record.quality_status,
         "quality_warnings": decode_json(record.quality_warnings_json, []),
-        "risk_level": record.risk_level,
-        "risk_summary": record.risk_summary,
-        "recommendation": record.recommendation,
+        "risk_level": risk_assessment["risk_level"],
+        "risk_score": risk_assessment["score"],
+        "risk_summary": risk_assessment["risk_summary"],
+        "recommendation": risk_assessment["recommendation"],
+        "risk_assessment": risk_assessment,
         "marker_detection": marker_detection,
         "quantification": quantification,
         "analysis_stages": build_analysis_stages(marker_detection, quantification),
@@ -1989,6 +2552,11 @@ def upload_batch():
         if item_status != 200 and status_code == 200:
             status_code = item_status
 
+    try:
+        bundle_projection = build_bundle_projection_from_results(results, bundle_code)
+    except Exception as exc:  # pragma: no cover
+        bundle_projection = build_bundle_projection_unavailable(f"长景回投生成失败：{exc}")
+
     return (
         jsonify(
             {
@@ -1996,6 +2564,7 @@ def upload_batch():
                 "house_id": house.id if house else None,
                 "bundle_code": bundle_code,
                 "bundle_report_url": url_for("download_bundle_report", bundle_code=bundle_code),
+                "bundle_projection": bundle_projection,
                 "results": results,
             }
         ),
@@ -2151,6 +2720,7 @@ def list_house_detections(house_id: int):
         .limit(12)
         .all()
     )
+    previous_lookup = build_previous_record_lookup(records)
 
     return jsonify(
         {
@@ -2160,7 +2730,9 @@ def list_house_detections(house_id: int):
             "crack_location": house.crack_location,
             "detection_type": house.detection_type,
             "trend_summary": build_trend_summary(records),
-            "records": [serialize_segmentation_record(record) for record in records],
+            "records": [
+                serialize_segmentation_record(record, previous_record=previous_lookup.get(record.id)) for record in records
+            ],
         }
     )
 
@@ -2359,7 +2931,11 @@ def rerun_detection_record(record_id: int):
     return jsonify(
         {
             "message": "Detection rerun successfully",
-            "record": serialize_segmentation_record(record),
+            "record": serialize_segmentation_record(
+                record,
+                previous_record=history_records[0] if history_records else None,
+                risk_assessment=risk_assessment,
+            ),
             "quality_report": serialize_quality_report(quality_report),
             "risk_assessment": risk_assessment,
             "marker_detection": {

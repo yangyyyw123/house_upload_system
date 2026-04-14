@@ -481,6 +481,88 @@ function formatMetricValue(mmValue, pxValue, unitLabel = "") {
     return "-";
 }
 
+function formatRiskScore(risk = {}) {
+    if (risk.score === null || risk.score === undefined || risk.score === "") {
+        return "-";
+    }
+    return `${risk.score} 分`;
+}
+
+function formatRiskThresholds(thresholds = []) {
+    if (!Array.isArray(thresholds) || !thresholds.length) {
+        return "";
+    }
+
+    return thresholds
+        .map((item) => {
+            const minScore = item.min_score ?? 0;
+            const maxScore = item.max_score;
+            const scoreRange = maxScore === null || maxScore === undefined ? `${minScore}+` : `${minScore}-${maxScore}`;
+            return `${item.risk_level || "-"} ${scoreRange} 分`;
+        })
+        .join(" / ");
+}
+
+function buildRiskBreakdownCard(risk = {}) {
+    const breakdown = Array.isArray(risk.score_breakdown) ? risk.score_breakdown : [];
+    const notes = Array.isArray(risk.explanation_notes) ? risk.explanation_notes : [];
+    const hasContent =
+        breakdown.length ||
+        notes.length ||
+        risk.score !== null && risk.score !== undefined ||
+        risk.risk_level ||
+        risk.risk_summary;
+
+    if (!hasContent) {
+        return "";
+    }
+
+    const thresholdText = formatRiskThresholds(risk.level_thresholds || []);
+    const breakdownHtml = breakdown.length
+        ? `
+            <ul class="risk-breakdown-list">
+                ${breakdown
+                    .map(
+                        (item) => `
+                            <li class="risk-breakdown-item">
+                                <div class="risk-breakdown-line">
+                                    <span class="risk-breakdown-points">+${escapeHtml(item.score ?? 0)} 分</span>
+                                    <strong>${escapeHtml(item.title || "评分项")}</strong>
+                                </div>
+                                <p>${escapeHtml(item.detail || "-")}</p>
+                            </li>
+                        `
+                    )
+                    .join("")}
+            </ul>
+        `
+        : '<p class="risk-breakdown-empty">当前未触发明显加分项，系统按常规观察范围处理。</p>';
+
+    const notesHtml = notes.length
+        ? `
+            <ul class="risk-note-list">
+                ${notes.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+            </ul>
+        `
+        : "";
+
+    const thresholdHtml = thresholdText
+        ? `<p class="risk-threshold-text">分级阈值：${escapeHtml(thresholdText)}</p>`
+        : "";
+
+    return `
+        <article class="note-card risk-breakdown-card">
+            <div class="risk-breakdown-head">
+                <h3>风险评分依据</h3>
+                <strong>${escapeHtml(risk.risk_level || "未生成")} / ${escapeHtml(formatRiskScore(risk))}</strong>
+            </div>
+            ${breakdownHtml}
+            ${notesHtml}
+            ${thresholdHtml}
+        </article>
+    `;
+}
+
 function formatMarkerMode(markerDetection = {}) {
     if (markerDetection.detection_method === "qr_anchor_rectified" || markerDetection.status === "anchor_rectified") {
         return "二维码 + 四角矫正";
@@ -556,7 +638,12 @@ function buildResultMediaCard(title, url, emptyText) {
 
 function buildResultCard(item) {
     const quality = item.quality_report || {};
-    const risk = item.risk_assessment || {};
+    const risk = item.risk_assessment || {
+        risk_level: item.risk_level,
+        score: item.risk_score,
+        risk_summary: item.risk_summary,
+        recommendation: item.recommendation,
+    };
     const markerDetection = item.marker_detection || {};
     const quantification = item.quantification || {};
     const analysisStages = item.analysis_stages || {};
@@ -586,6 +673,10 @@ function buildResultCard(item) {
                     <strong>${escapeHtml(quality.status || "-")} / ${escapeHtml(quality.score ?? "-")}</strong>
                 </article>
                 <article class="summary-card">
+                    <span>风险评分</span>
+                    <strong>${escapeHtml(formatRiskScore(risk))}</strong>
+                </article>
+                <article class="summary-card">
                     <span>裂缝占比</span>
                     <strong>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</strong>
                 </article>
@@ -600,6 +691,7 @@ function buildResultCard(item) {
                     <p>${escapeHtml(risk.risk_summary || item.segmentation_error || item.message || "-")}</p>
                 </article>
             </div>
+            ${buildRiskBreakdownCard(risk)}
             ${buildStageCards(analysisStages)}
             <article class="note-card quant-note-card">
                 <h3>量化阶段说明</h3>
@@ -647,16 +739,78 @@ function buildResultCard(item) {
     `;
 }
 
+function renderBundleProjection(projection) {
+    const panel = document.getElementById("bundleProjectionPanel");
+    if (!projection) {
+        panel.innerHTML = "";
+        setVisible("bundleProjectionPanel", false);
+        return;
+    }
+
+    const projectedItems = Array.isArray(projection.projected_items) ? projection.projected_items : [];
+    const bbox = projection.component_bbox || null;
+    const badgeClass = projection.status === "completed" ? "quality-good" : "quality-warning";
+    const badgeText = projection.status === "completed" ? "已生成" : "未生成";
+    const bboxText = bbox
+        ? `关注框：x ${bbox.x} / y ${bbox.y} / w ${bbox.width} / h ${bbox.height}`
+        : "关注框：当前未生成";
+    const itemList = projectedItems.length
+        ? `
+            <div class="bundle-projection-list">
+                ${projectedItems
+                    .map((item) => {
+                        const itemBbox = item.bbox || null;
+                        const itemBboxText = itemBbox
+                            ? `回投框 x ${itemBbox.x} / y ${itemBbox.y} / w ${itemBbox.width} / h ${itemBbox.height}`
+                            : "未生成回投框";
+                        return `
+                            <article class="summary-card bundle-projection-item">
+                                <span>${escapeHtml(item.capture_scale || "-")}</span>
+                                <strong>${escapeHtml(item.detection_code || "-")}</strong>
+                                <p>${escapeHtml(itemBboxText)}</p>
+                            </article>
+                        `;
+                    })
+                    .join("")}
+            </div>
+        `
+        : "";
+
+    panel.className = "note-card bundle-projection-panel";
+    panel.innerHTML = `
+        <div class="bundle-projection-head">
+            <div>
+                <h3>长景构件框选 + 中近景回投</h3>
+                <p>${escapeHtml(projection.message || "当前批次尚未生成长景回投结果。")}</p>
+            </div>
+            <span class="quality-badge ${badgeClass}">${badgeText}</span>
+        </div>
+        ${projection.overview_image_url ? `<img src="${escapeHtml(projection.overview_image_url)}" alt="长景构件框选与中近景回投总览">` : ""}
+        <p class="bundle-projection-meta">${escapeHtml(bboxText)}</p>
+        ${itemList}
+    `;
+    setVisible("bundleProjectionPanel", true);
+}
+
 function renderBatchUploadResult(payload) {
     const results = payload.results || [];
     const list = document.getElementById("batchResultList");
     list.innerHTML = results.map(buildResultCard).join("");
+    renderBundleProjection(payload.bundle_projection);
     const batchBundleActions = document.getElementById("batchBundleActions");
     if (payload.bundle_report_url) {
+        const projectionLink = payload.bundle_projection?.overview_image_url
+            ? `
+                <a class="button-link" href="${escapeHtml(payload.bundle_projection.overview_image_url)}" target="_blank" rel="noopener noreferrer">
+                    打开长景回投图
+                </a>
+            `
+            : "";
         batchBundleActions.innerHTML = `
             <a class="button-link" href="${escapeHtml(payload.bundle_report_url)}" target="_blank" rel="noopener noreferrer">
                 下载三景总报告
             </a>
+            ${projectionLink}
         `;
         setVisible("batchBundleActions", true);
     } else {
@@ -692,6 +846,12 @@ function renderHistory(records) {
     records.forEach((record) => {
         const item = document.createElement("article");
         item.className = "history-item";
+        const risk = record.risk_assessment || {
+            risk_level: record.risk_level,
+            score: record.risk_score,
+            risk_summary: record.risk_summary,
+            recommendation: record.recommendation,
+        };
         const markerDetection = record.marker_detection || {};
         const quantification = record.quantification || {};
         const analysisStages = record.analysis_stages || {};
@@ -712,14 +872,16 @@ function renderHistory(records) {
                 <span>构件：${escapeHtml(record.component_type || "-")}</span>
                 <span>场景：${escapeHtml(record.scenario_type || "-")}</span>
                 <span>质量：${escapeHtml(record.quality_status || "-")} / ${escapeHtml(record.quality_score ?? "-")}</span>
-                <span>风险：${escapeHtml(record.risk_level || "-")}</span>
+                <span>风险：${escapeHtml(risk.risk_level || record.risk_level || "-")}</span>
+                <span>评分：${escapeHtml(formatRiskScore(risk))}</span>
                 <span>裂缝占比：${escapeHtml(record.crack_area_ratio ?? "-")}</span>
             </div>
             ${buildStageCards(analysisStages)}
             ${buildQuantificationTable(markerDetection, quantification)}
-            <p class="history-summary">${escapeHtml(record.risk_summary || "暂无风险说明。")}</p>
+            <p class="history-summary">${escapeHtml(risk.risk_summary || record.risk_summary || "暂无风险说明。")}</p>
             <p class="history-summary">${escapeHtml(quantification.message || "暂无量化说明。")}</p>
-            <p class="history-summary">${escapeHtml(record.recommendation || "暂无处置建议。")}</p>
+            <p class="history-summary">${escapeHtml(risk.recommendation || record.recommendation || "暂无处置建议。")}</p>
+            ${buildRiskBreakdownCard(risk)}
             ${warnings ? `<ul class="history-warnings">${warnings}</ul>` : ""}
             <div class="history-links">
                 ${record.source_image_url ? `<a href="${escapeHtml(record.source_image_url)}" target="_blank" rel="noopener noreferrer">原图</a>` : ""}

@@ -597,7 +597,7 @@ button:disabled {
 }
 
 .summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     margin-bottom: 16px;
 }
 
@@ -639,6 +639,121 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 16px;
+}
+
+.bundle-projection-panel {
+    margin-bottom: 18px;
+}
+
+.bundle-projection-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.bundle-projection-head h3 {
+    margin: 0;
+}
+
+.bundle-projection-head p,
+.bundle-projection-meta,
+.bundle-projection-item p {
+    color: var(--muted);
+    line-height: 1.7;
+}
+
+.bundle-projection-panel img {
+    width: 100%;
+    margin: 16px 0 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(20, 58, 92, 0.1);
+    background: #fff;
+}
+
+.bundle-projection-meta {
+    margin: 0 0 14px;
+}
+
+.bundle-projection-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+}
+
+.bundle-projection-item {
+    padding: 16px;
+}
+
+.risk-breakdown-card {
+    margin-bottom: 16px;
+}
+
+.risk-breakdown-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 14px;
+}
+
+.risk-breakdown-head h3 {
+    margin: 0;
+}
+
+.risk-breakdown-head strong {
+    font-size: 18px;
+    color: var(--secondary);
+}
+
+.risk-breakdown-list,
+.risk-note-list {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--muted);
+}
+
+.risk-breakdown-list {
+    display: grid;
+    gap: 12px;
+}
+
+.risk-breakdown-item p {
+    margin: 8px 0 0;
+}
+
+.risk-breakdown-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+}
+
+.risk-breakdown-points {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: rgba(37, 80, 168, 0.12);
+    color: var(--secondary);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.risk-breakdown-empty,
+.risk-threshold-text {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.7;
+}
+
+.risk-note-list {
+    margin-top: 14px;
+}
+
+.risk-threshold-text {
+    margin-top: 14px;
 }
 
 .stage-grid {
