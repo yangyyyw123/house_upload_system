@@ -1,12 +1,15 @@
 import importlib.util
+import csv
 import json
 import sys
 import textwrap
 from datetime import datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from uuid import uuid4
 
+import cv2
+import numpy as np
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
 from flask_sqlalchemy import SQLAlchemy
@@ -32,11 +35,17 @@ try:
 except ImportError:
     from crack_quantification_service import CrackQuantificationService, QuantificationError
 
+try:
+    from .target_generator_service import TargetGenerationError, TargetGeneratorService
+except ImportError:
+    from target_generator_service import TargetGenerationError, TargetGeneratorService
+
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 UPLOAD_ROOT = BASE_DIR / "uploads"
 SEGMENTATION_ROOT = UPLOAD_ROOT / "segmentation"
+TARGET_ROOT = UPLOAD_ROOT / "targets"
 PREFERRED_PYTHON = PROJECT_ROOT / ".venv311" / "Scripts" / "python.exe"
 
 app = Flask(__name__)
@@ -53,6 +62,7 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 db = SQLAlchemy(app)
 segmentation_service = CrackSegmentationService()
 quantification_service = CrackQuantificationService()
+target_generator_service = TargetGeneratorService(TARGET_ROOT)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
 QUALITY_GUIDANCE = {
@@ -96,6 +106,7 @@ def allowed_file(filename: str) -> bool:
 def ensure_runtime_directories() -> None:
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     SEGMENTATION_ROOT.mkdir(parents=True, exist_ok=True)
+    TARGET_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def build_file_url(path: Path) -> str | None:
@@ -257,30 +268,114 @@ def analyze_image_quality(image_path: Path) -> dict[str, object]:
 
 def assess_detection_risk(
     segmentation_result: dict[str, object],
+    quantification: dict[str, object],
     quality_report: dict[str, object],
     metadata: dict[str, str],
+    history_records: list["ImageSegmentationRecord"] | None = None,
 ) -> dict[str, str]:
     area_ratio = float(segmentation_result.get("crack_area_ratio") or 0.0)
     component_type = metadata["component_type"]
     scenario_type = metadata["scenario_type"]
+    max_width_mm = quantification.get("max_width_mm")
+    crack_length_mm = quantification.get("crack_length_mm")
+    crack_angle_deg = quantification.get("crack_angle_deg")
+    is_structural = component_type in {"承重墙", "梁", "柱"}
+    width_value = float(max_width_mm or 0.0)
+    length_value = float(crack_length_mm or 0.0)
 
-    level_index = 0
-    if area_ratio >= 0.001:
-        level_index = 1
-    if area_ratio >= 0.003:
-        level_index = 2
-    if area_ratio >= 0.008:
-        level_index = 3
+    score = 0
+    reasons: list[str] = []
 
-    if component_type in {"承重墙", "梁", "柱"}:
-        level_index = min(3, level_index + 1)
+    if max_width_mm is not None:
+        if width_value >= 1.0:
+            score += 5
+            reasons.append(f"最大宽度 {width_value:.3f} mm，已达到高风险阈值。")
+        elif width_value >= 0.6:
+            score += 4
+            reasons.append(f"最大宽度 {width_value:.3f} mm，已明显超过常规观察阈值。")
+        elif width_value >= 0.3:
+            score += 2
+            reasons.append(f"最大宽度 {width_value:.3f} mm，建议重点跟踪。")
+    else:
+        if area_ratio >= 0.008:
+            score += 4
+            reasons.append("当前未建立毫米尺度，裂缝面积占比较高。")
+        elif area_ratio >= 0.003:
+            score += 2
+            reasons.append("当前未建立毫米尺度，裂缝面积占比已有增长迹象。")
+        elif area_ratio >= 0.001:
+            score += 1
 
-    if scenario_type == "灾后评估" and level_index < 2:
-        level_index += 1
+    if crack_length_mm is not None:
+        if length_value >= 800:
+            score += 3
+            reasons.append(f"裂缝长度 {length_value:.1f} mm，属于长裂缝。")
+        elif length_value >= 300:
+            score += 2
+            reasons.append(f"裂缝长度 {length_value:.1f} mm，已超过常规巡检关注阈值。")
+        elif length_value >= 120:
+            score += 1
+    elif area_ratio >= 0.005:
+        score += 1
 
-    level = ["无风险", "低风险", "中风险", "高风险"][level_index]
+    if is_structural:
+        score += 2
+        reasons.append("裂缝位于承重或主要受力构件。")
+
+    if scenario_type == "灾后评估":
+        score += 1
+        reasons.append("当前场景为灾后评估，风险基线提高一级。")
+
+    if crack_angle_deg is not None and is_structural:
+        angle_value = abs(float(crack_angle_deg))
+        normalized_angle = min(angle_value % 180.0, 180.0 - (angle_value % 180.0))
+        if 35.0 <= normalized_angle <= 65.0:
+            score += 1
+            reasons.append(f"裂缝方向 {angle_value:.1f} deg，属于结构受力敏感方向。")
+
+    latest_previous = history_records[0] if history_records else None
+    growth_message = None
+    if latest_previous is not None:
+        previous_width = latest_previous.max_width_mm
+        previous_length = latest_previous.crack_length_mm
+        if previous_width is not None and max_width_mm is not None and previous_width > 0:
+            width_growth = (width_value - float(previous_width)) / float(previous_width)
+            if width_growth >= 0.5:
+                score += 2
+                growth_message = f"最大宽度较上次增长 {width_growth * 100:.1f}% 。"
+            elif width_growth >= 0.2:
+                score += 1
+                growth_message = f"最大宽度较上次增长 {width_growth * 100:.1f}% 。"
+        elif previous_length is not None and crack_length_mm is not None and previous_length > 0:
+            length_growth = (length_value - float(previous_length)) / float(previous_length)
+            if length_growth >= 0.5:
+                score += 1
+                growth_message = f"裂缝长度较上次增长 {length_growth * 100:.1f}% 。"
+        elif latest_previous.crack_area_ratio and area_ratio > latest_previous.crack_area_ratio:
+            area_growth = (area_ratio - float(latest_previous.crack_area_ratio)) / max(float(latest_previous.crack_area_ratio), 1e-6)
+            if area_growth >= 0.5:
+                score += 1
+                growth_message = f"裂缝面积占比较上次增长 {area_growth * 100:.1f}% 。"
+
+    if score >= 8:
+        level = "高风险"
+    elif score >= 5:
+        level = "中风险"
+    elif score >= 2:
+        level = "低风险"
+    else:
+        level = "无风险"
+
     summary = RISK_TEXT[level]
+    if reasons:
+        summary += " " + " ".join(reasons[:3])
+    if growth_message:
+        summary += " " + growth_message
     recommendation = RISK_ACTIONS[level]
+    if max_width_mm is not None and width_value >= 1.0 and is_structural:
+        recommendation = "建议尽快安排专业结构安全检测，并限制相关承重区域继续使用。"
+    elif max_width_mm is not None and width_value >= 0.3:
+        recommendation = "建议在 1-2 周内复拍复核，并结合现场巡查确认是否继续扩展。"
 
     if quality_report["status"] == "warning":
         summary += " 当前图像质量一般，建议结合补拍结果综合判断。"
@@ -292,6 +387,23 @@ def assess_detection_risk(
         "risk_summary": summary,
         "recommendation": recommendation,
     }
+
+
+def get_record_trend_metric(record: "ImageSegmentationRecord") -> tuple[str, float]:
+    if record.max_width_mm is not None:
+        return "max_width_mm", float(record.max_width_mm)
+    if record.crack_length_mm is not None:
+        return "crack_length_mm", float(record.crack_length_mm)
+    return "crack_area_ratio", float(record.crack_area_ratio or 0.0)
+
+
+def get_trend_metric_label(metric_name: str) -> tuple[str, str]:
+    mapping = {
+        "max_width_mm": ("最大宽度趋势曲线", "mm"),
+        "crack_length_mm": ("裂缝长度趋势曲线", "mm"),
+        "crack_area_ratio": ("裂缝占比趋势曲线", "ratio"),
+    }
+    return mapping.get(metric_name, ("趋势曲线", "value"))
 
 
 def serialize_quality_report(report: dict[str, object]) -> dict[str, object]:
@@ -314,13 +426,22 @@ def build_analysis_stages(
     physical_scale = (marker_detection or {}).get("physical_scale_mm_per_pixel")
     quant_status = (quantification or {}).get("status")
 
-    if marker_status == "completed":
+    if marker_status in {"completed", "anchor_rectified"}:
         recognition_summary = f"识别阶段已完成，检测到 {marker_count} 个靶标，并可生成 mm/pixel 比例。"
+    elif marker_status == "qr_detected":
+        recognition_summary = f"二维码已识别，但四角锚点不足，未完成透视矫正；当前比例仅基于二维码边长估计。"
+    elif marker_status == "fallback_detected":
+        recognition_summary = f"二维码未识别成功，已回退到矩形靶标估计模式，检测到 {marker_count} 个候选靶标。"
     else:
         recognition_summary = "识别阶段已完成裂缝分割，但未识别到可用靶标。"
 
+    plane_mode = (quantification or {}).get("plane_mode")
     if quant_status == "completed":
-        quant_summary = "量化阶段已完成，已输出毫米级宽度、长度和角度指标。"
+        quant_summary = (
+            "量化阶段已完成，已在透视矫正后的平面上输出毫米级宽度、长度和角度指标。"
+            if plane_mode == "rectified_plane"
+            else "量化阶段已完成，已输出毫米级宽度、长度和角度指标。"
+        )
     elif quant_status == "pixel_only":
         quant_summary = "量化阶段已完成，但当前仅能输出像素级指标，未换算为毫米。"
     else:
@@ -347,11 +468,15 @@ def build_empty_quantification_result(message: str, status: str = "failed") -> d
             "marker_count": 0,
             "physical_scale_mm_per_pixel": None,
             "annotated_image_path": None,
+            "detection_method": None,
+            "anchor_count": 0,
+            "perspective_corrected": False,
             "targets": [],
         },
         "quantification": {
             "status": status,
             "message": message,
+            "plane_mode": "image_plane",
             "component_count": 0,
             "sample_count": 0,
             "max_width_px": None,
@@ -393,7 +518,8 @@ def build_trend_summary(records: list["ImageSegmentationRecord"]) -> dict[str, o
     usable_records = [
         record
         for record in records
-        if record.analysis_status == "completed" and record.crack_area_ratio is not None
+        if record.analysis_status == "completed"
+        and (record.max_width_mm is not None or record.crack_length_mm is not None or record.crack_area_ratio is not None)
     ]
 
     if len(usable_records) < 2:
@@ -404,30 +530,35 @@ def build_trend_summary(records: list["ImageSegmentationRecord"]) -> dict[str, o
 
     latest = usable_records[0]
     previous = usable_records[1]
-    delta_ratio = round(latest.crack_area_ratio - previous.crack_area_ratio, 6)
-    previous_ratio = previous.crack_area_ratio or 0.0
+    metric_name, latest_value = get_record_trend_metric(latest)
+    _previous_metric_name, previous_value = get_record_trend_metric(previous)
+    delta_ratio = round(latest_value - previous_value, 6)
+    previous_ratio = previous_value or 0.0
     delta_percent = None
     if previous_ratio > 0:
         delta_percent = round(delta_ratio / previous_ratio * 100, 2)
 
-    if delta_ratio >= 0.005 or (delta_percent is not None and delta_percent >= 80):
+    if delta_percent is not None and delta_percent >= 80:
         status = "rapid"
-        message = "最近一次检测显示裂缝指标增长较快，建议尽快复核。"
-    elif delta_ratio > 0.001 or (delta_percent is not None and delta_percent >= 20):
+        message = f"最近一次检测显示关键指标 {metric_name} 增长较快，建议尽快复核。"
+    elif delta_percent is not None and delta_percent >= 20:
         status = "growing"
-        message = "裂缝指标较上次有所增加，建议缩短复拍周期。"
-    elif delta_ratio < -0.001:
+        message = f"关键指标 {metric_name} 较上次有所增加，建议缩短复拍周期。"
+    elif delta_percent is not None and delta_percent <= -15:
         status = "improving"
-        message = "最近一次检测指标较上次下降，裂缝表现暂时稳定。"
+        message = f"关键指标 {metric_name} 较上次下降，裂缝表现暂时稳定。"
     else:
         status = "stable"
-        message = "近两次检测指标变化不大，当前趋势整体平稳。"
+        message = f"近两次检测的关键指标 {metric_name} 变化不大，当前趋势整体平稳。"
 
     return {
         "status": status,
         "message": message,
         "latest_detection_code": latest.detection_code,
         "previous_detection_code": previous.detection_code,
+        "metric_name": metric_name,
+        "latest_value": latest_value,
+        "previous_value": previous_value,
         "delta_area_ratio": delta_ratio,
         "delta_percent": delta_percent,
     }
@@ -682,18 +813,21 @@ def add_trend_chart(
         fill="#F8FBFC",
         outline="#D8E6E6",
     )
-    draw.text((REPORT_MARGIN + 20, start_y + 18), "裂缝占比趋势曲线", fill="#183042", font=title_font)
+    metric_name, _initial_value = get_record_trend_metric(records[0]) if records else ("crack_area_ratio", 0.0)
+    chart_title, metric_unit = get_trend_metric_label(metric_name)
+    draw.text((REPORT_MARGIN + 20, start_y + 18), chart_title, fill="#183042", font=title_font)
 
     if len(records) < 2:
         draw.text((REPORT_MARGIN + 20, chart_top + 120), "当前历史数据不足，至少两次检测后才会生成趋势曲线。", fill="#7A8F9C", font=body_font)
         return chart_bottom + 84
 
     ordered_records = list(reversed(records))
-    values = [float(record.crack_area_ratio or 0.0) for record in ordered_records]
+    values = [get_record_trend_metric(record)[1] for record in ordered_records]
     max_value = max(values)
     min_value = min(values)
-    span = max(max_value - min_value, max_value * 0.2, 0.0005)
-    y_min = max(0.0, min_value - span * 0.15)
+    minimum_span = 0.0005 if metric_unit == "ratio" else 0.05
+    span = max(max_value - min_value, max_value * 0.2, minimum_span)
+    y_min = max(0.0, min_value - span * 0.15) if metric_unit != "ratio" else max(0.0, min_value - span * 0.15)
     y_max = max_value + span * 0.15
 
     for index in range(5):
@@ -701,7 +835,12 @@ def add_trend_chart(
         y = chart_bottom - int(chart_height * ratio)
         value = y_min + (y_max - y_min) * ratio
         draw.line((chart_left, y, chart_right, y), fill="#E2EAEE", width=2)
-        draw.text((REPORT_MARGIN + 4, y - 10), f"{value:.4f}", fill="#6A7F8E", font=small_font)
+        draw.text(
+            (REPORT_MARGIN + 4, y - 10),
+            f"{value:.4f}" if metric_unit == "ratio" else f"{value:.2f}",
+            fill="#6A7F8E",
+            font=small_font,
+        )
 
     draw.line((chart_left, chart_top, chart_left, chart_bottom), fill="#90A4AE", width=3)
     draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill="#90A4AE", width=3)
@@ -709,7 +848,7 @@ def add_trend_chart(
     step = (chart_right - chart_left) / max(1, len(ordered_records) - 1)
     points: list[tuple[int, int]] = []
     for index, record in enumerate(ordered_records):
-        value = float(record.crack_area_ratio or 0.0)
+        value = get_record_trend_metric(record)[1]
         x = int(chart_left + step * index)
         normalized = (value - y_min) / max(y_max - y_min, 1e-9)
         y = int(chart_bottom - normalized * chart_height)
@@ -727,11 +866,16 @@ def add_trend_chart(
             "高风险": "#C43D2C",
         }.get(record.risk_level or "", "#2A7F62")
         draw.ellipse((point[0] - 8, point[1] - 8, point[0] + 8, point[1] + 8), fill=risk_color, outline="white", width=3)
-        draw.text((point[0] - 18, point[1] - 34), f"{value:.4f}", fill="#183042", font=small_font)
+        draw.text(
+            (point[0] - 18, point[1] - 34),
+            f"{value:.4f}" if metric_unit == "ratio" else f"{value:.2f}",
+            fill="#183042",
+            font=small_font,
+        )
 
     draw.text(
         (REPORT_MARGIN + 20, chart_bottom + 48),
-        "说明：曲线展示同一房屋最近检测记录中的裂缝占比变化，点位颜色对应当次风险等级。",
+        "说明：曲线优先展示毫米级量测值变化；若缺少物理尺度，则回退展示裂缝占比。点位颜色对应当次风险等级。",
         fill="#6A7F8E",
         font=body_font,
     )
@@ -1436,15 +1580,32 @@ def ensure_sqlite_columns() -> None:
 
 
 def serialize_segmentation_record(record: ImageSegmentationRecord) -> dict:
+    marker_status = record.marker_status
+    if marker_status == "anchor_rectified":
+        detection_method = "qr_anchor_rectified"
+        perspective_corrected = True
+    elif marker_status == "qr_detected":
+        detection_method = "qr_decode"
+        perspective_corrected = False
+    elif marker_status == "fallback_detected":
+        detection_method = "legacy_rect"
+        perspective_corrected = False
+    else:
+        detection_method = None
+        perspective_corrected = False
+
     marker_detection = {
-        "status": record.marker_status,
+        "status": marker_status,
         "marker_count": record.marker_count,
         "physical_scale_mm_per_pixel": record.physical_scale_mm_per_pixel,
+        "detection_method": detection_method,
+        "perspective_corrected": perspective_corrected,
         "annotated_image_url": build_file_url(Path(record.target_overlay_path)) if record.target_overlay_path else None,
     }
     quantification = {
         "status": record.quantification_status,
         "message": record.quantification_message,
+        "plane_mode": "rectified_plane" if perspective_corrected and record.quantification_status == "completed" else "image_plane",
         "component_count": record.component_count,
         "sample_count": record.sample_count,
         "max_width_px": record.max_width_px,
@@ -1493,6 +1654,57 @@ def serialize_segmentation_record(record: ImageSegmentationRecord) -> dict:
     }
 
 
+def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, object]:
+    completed_records = [record for record in records if record.analysis_status == "completed"]
+    risk_distribution = {"无风险": 0, "低风险": 0, "中风险": 0, "高风险": 0}
+    houses_with_records = {record.house_id for record in completed_records if record.house_id}
+
+    latest_by_house: dict[int, ImageSegmentationRecord] = {}
+    for record in completed_records:
+        if record.risk_level in risk_distribution:
+            risk_distribution[record.risk_level] += 1
+        if not record.house_id:
+            continue
+        existing = latest_by_house.get(record.house_id)
+        if existing is None or (record.created_at, record.id) > (existing.created_at, existing.id):
+            latest_by_house[record.house_id] = record
+
+    high_risk_houses: list[dict[str, object]] = []
+    for house_id, record in latest_by_house.items():
+        if record.risk_level not in {"中风险", "高风险"}:
+            continue
+        house = db.session.get(HouseInfo, house_id)
+        high_risk_houses.append(
+            {
+                "house_id": house_id,
+                "house_number": house.house_number if house else f"HOUSE-{house_id}",
+                "risk_level": record.risk_level,
+                "max_width_mm": record.max_width_mm,
+                "crack_length_mm": record.crack_length_mm,
+                "component_type": record.component_type,
+                "scenario_type": record.scenario_type,
+                "detection_code": record.detection_code,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+            }
+        )
+
+    high_risk_houses.sort(
+        key=lambda item: (
+            0 if item["risk_level"] == "高风险" else 1,
+            -(item["max_width_mm"] or 0.0),
+            -(item["crack_length_mm"] or 0.0),
+        )
+    )
+
+    return {
+        "total_records": len(records),
+        "completed_records": len(completed_records),
+        "house_count": len(houses_with_records),
+        "risk_distribution": risk_distribution,
+        "high_risk_houses": high_risk_houses[:20],
+    }
+
+
 def resolve_house_from_request(house_id_value: str | None) -> tuple["HouseInfo | None", tuple[dict, int] | None]:
     if not house_id_value:
         return None, None
@@ -1507,6 +1719,17 @@ def resolve_house_from_request(house_id_value: str | None) -> tuple["HouseInfo |
         return None, ({"message": "未找到对应的房屋档案。"}, 404)
 
     return house, None
+
+
+def get_recent_house_records(house_id: int | None, limit: int = 5) -> list["ImageSegmentationRecord"]:
+    if not house_id:
+        return []
+    return (
+        ImageSegmentationRecord.query.filter_by(house_id=house_id, analysis_status="completed")
+        .order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
+        .limit(limit)
+        .all()
+    )
 
 
 def save_uploaded_file(file_storage) -> tuple[str, Path]:
@@ -1571,10 +1794,17 @@ def process_saved_image(
         response_payload["segmentation_error"] = format_inference_error(exc)
         return response_payload, 500
 
-    risk_assessment = assess_detection_risk(segmentation_result, quality_report, metadata)
     quantification_result = run_quantification_analysis(saved_path, segmentation_result)
     marker_detection = quantification_result["marker_detection"]
     quantification = quantification_result["quantification"]
+    history_records = get_recent_house_records(house.id if house else None, limit=5)
+    risk_assessment = assess_detection_risk(
+        segmentation_result=segmentation_result,
+        quantification=quantification,
+        quality_report=quality_report,
+        metadata=metadata,
+        history_records=history_records,
+    )
     response_payload["segmentation"] = {
         **segmentation_result,
         "mask_url": build_file_url(Path(segmentation_result["mask_path"])),
@@ -1791,6 +2021,98 @@ def inference_health():
     )
 
 
+@app.route("/targets/specs", methods=["GET"])
+def list_target_specs():
+    return jsonify({"specs": target_generator_service.list_specs()})
+
+
+@app.route("/targets/generate", methods=["POST"])
+def generate_target():
+    ensure_runtime_directories()
+    data = request.get_json() or {}
+    house_number = clean_text(data.get("house_number"))
+    inspection_region = clean_text(data.get("inspection_region"))
+    scene_type = clean_text(data.get("scene_type"))
+    spec_key = clean_text(data.get("spec_key"), "a4_qr80")
+
+    if not house_number:
+        return jsonify({"message": "house_number 不能为空"}), 400
+    if not inspection_region:
+        return jsonify({"message": "inspection_region 不能为空"}), 400
+    if not scene_type:
+        return jsonify({"message": "scene_type 不能为空"}), 400
+
+    try:
+        result = target_generator_service.generate_target(
+            house_number=house_number,
+            inspection_region=inspection_region,
+            scene_type=scene_type,
+            spec_key=spec_key,
+        )
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except TargetGenerationError as exc:
+        return jsonify({"message": f"靶标生成失败: {exc}"}), 500
+
+    png_path = Path(result["paths"]["png"])
+    pdf_path = Path(result["paths"]["pdf"])
+    manifest_path = Path(result["paths"]["manifest"])
+    return jsonify(
+        {
+            "message": "二维码靶标已生成",
+            "target_id": result["target_id"],
+            "payload": result["payload"],
+            "qr_payload": result["qr_payload"],
+            "spec": result["spec"],
+            "preview_url": build_file_url(png_path),
+            "files": {
+                "png_url": build_file_url(png_path),
+                "pdf_url": build_file_url(pdf_path),
+                "manifest_url": build_file_url(manifest_path),
+            },
+        }
+    ), 201
+
+
+@app.route("/targets/precheck", methods=["POST"])
+def precheck_target():
+    if "file" not in request.files:
+        return jsonify({"message": "未检测到中景图像文件"}), 400
+
+    file = request.files["file"]
+    if not file or not file.filename:
+        return jsonify({"message": "请选择要预检的中景图像"}), 400
+
+    file_bytes = file.read()
+    if not file_bytes:
+        return jsonify({"message": "中景图像内容为空"}), 400
+
+    image_array = np.frombuffer(file_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    if image is None:
+        return jsonify({"message": "无法读取中景图像内容"}), 400
+
+    marker_detection = quantification_service.inspect_target_image(image)
+    passed = marker_detection.get("status") == "anchor_rectified"
+    if passed:
+        message = "二维码和四角锚点识别成功，可进入上传分析。"
+        status_code = 200
+    elif marker_detection.get("status") == "qr_detected":
+        message = "二维码可解码，但四角锚点未稳定识别，请调整拍摄角度、距离或清晰度后重拍中景图。"
+        status_code = 422
+    else:
+        message = "未识别到可用二维码靶标，请确保裂缝与二维码靶标同框、同平面且清晰可见。"
+        status_code = 422
+
+    return jsonify(
+        {
+            "message": message,
+            "passed": passed,
+            "marker_detection": marker_detection,
+        }
+    ), status_code
+
+
 @app.route("/submit_house_info", methods=["POST"])
 def submit_house_info():
     data = request.get_json() or {}
@@ -1840,6 +2162,52 @@ def list_house_detections(house_id: int):
             "trend_summary": build_trend_summary(records),
             "records": [serialize_segmentation_record(record) for record in records],
         }
+    )
+
+
+@app.route("/survey/summary", methods=["GET"])
+def survey_summary():
+    records = (
+        ImageSegmentationRecord.query.order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
+        .all()
+    )
+    summary = build_survey_summary(records)
+    return jsonify(summary)
+
+
+@app.route("/survey/summary.csv", methods=["GET"])
+def download_survey_summary_csv():
+    records = (
+        ImageSegmentationRecord.query.order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
+        .all()
+    )
+    summary = build_survey_summary(records)
+    csv_buffer = BytesIO()
+    text_buffer = StringIO()
+    writer = csv.writer(text_buffer)
+    writer.writerow(["section", "name", "value_1", "value_2", "value_3"])
+    writer.writerow(["overview", "total_records", summary["total_records"], "", ""])
+    writer.writerow(["overview", "completed_records", summary["completed_records"], "", ""])
+    writer.writerow(["overview", "house_count", summary["house_count"], "", ""])
+    for level, count in summary["risk_distribution"].items():
+        writer.writerow(["risk_distribution", level, count, "", ""])
+    for item in summary["high_risk_houses"]:
+        writer.writerow(
+            [
+                "high_risk_house",
+                item["house_number"],
+                item["risk_level"],
+                item["max_width_mm"] or "",
+                item["crack_length_mm"] or "",
+            ]
+        )
+    csv_buffer.write(text_buffer.getvalue().encode("utf-8-sig"))
+    csv_buffer.seek(0)
+    return send_file(
+        csv_buffer,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="survey-summary.csv",
     )
 
 
@@ -1942,10 +2310,18 @@ def rerun_detection_record(record_id: int):
     except Exception as exc:  # pragma: no cover
         return jsonify({"message": "Rerun failed", "segmentation_error": format_inference_error(exc)}), 500
 
-    risk_assessment = assess_detection_risk(segmentation_result, quality_report, metadata)
     quantification_result = run_quantification_analysis(source_path, segmentation_result)
     marker_detection = quantification_result["marker_detection"]
     quantification = quantification_result["quantification"]
+    history_records = get_recent_house_records(record.house_id, limit=5)
+    history_records = [item for item in history_records if item.id != record.id]
+    risk_assessment = assess_detection_risk(
+        segmentation_result=segmentation_result,
+        quantification=quantification,
+        quality_report=quality_report,
+        metadata=metadata,
+        history_records=history_records,
+    )
     record.analysis_status = "completed"
     record.mask_path = segmentation_result["mask_path"]
     record.overlay_path = segmentation_result["overlay_path"]

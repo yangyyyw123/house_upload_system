@@ -124,6 +124,40 @@
         <section class="panel">
             <div class="panel-heading">
                 <div>
+                    <p class="section-kicker">Step 2A</p>
+                    <h2>生成二维码靶标</h2>
+                </div>
+                <p class="section-note">先下载并打印靶标，再执行中景与近景拍摄。第一版优先保证“可识别 + 可下载”。</p>
+            </div>
+
+            <form id="targetForm" class="form-grid">
+                <label for="target_house_number">房屋编号</label>
+                <input type="text" id="target_house_number" name="target_house_number" placeholder="例如：HOUSE-001" required>
+
+                <label for="target_region">检测区域</label>
+                <input type="text" id="target_region" name="target_region" placeholder="例如：东侧承重墙 / 门窗洞口" required>
+
+                <label for="target_scene_type">场景类型</label>
+                <select id="target_scene_type" name="target_scene_type">
+                    <option value="常规巡检">常规巡检</option>
+                    <option value="裂缝精细测量">裂缝精细测量</option>
+                    <option value="房屋普查">房屋普查</option>
+                    <option value="灾后评估">灾后评估</option>
+                </select>
+
+                <label for="target_spec">靶标规格</label>
+                <select id="target_spec" name="target_spec"></select>
+
+                <button id="generateTargetButton" type="button" onclick="generateTarget()">生成二维码靶标</button>
+                <p id="targetStatus" class="status status-idle">填写房屋编号、检测区域和场景类型后即可生成 PNG / PDF 靶标。</p>
+            </form>
+
+            <div id="targetResult" class="target-result hidden"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-heading">
+                <div>
                     <p class="section-kicker">Step 3</p>
                     <h2>上传与分析</h2>
                 </div>
@@ -192,6 +226,11 @@
                     <p id="bundleSizeSummary">尚未选择完整的长景 / 中景 / 近景图像。</p>
                 </div>
 
+                <div id="targetPrecheckPanel" class="target-precheck-panel hidden">
+                    <strong>中景二维码预检</strong>
+                    <p id="targetPrecheckSummary">等待选择中景图像后进行二维码与四角锚点预检。</p>
+                </div>
+
                 <div id="bundleQualityPanel" class="quality-panel hidden">
                     <div class="quality-header">
                         <div>
@@ -241,6 +280,22 @@
                 <p id="trendSummaryText">至少需要两次检测后才能生成趋势分析。</p>
             </div>
             <div id="historyList" class="history-list"></div>
+        </section>
+
+        <section id="surveyPanel" class="panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="section-kicker">Step 6</p>
+                    <h2>普查汇总</h2>
+                </div>
+                <p class="section-note">基于平台内检测记录，汇总风险等级分布和重点房屋清单，并支持导出 CSV。</p>
+            </div>
+            <div class="action-row">
+                <button id="refreshSurveyButton" type="button" onclick="loadSurveySummary()">刷新汇总</button>
+                <a class="button-link compact-link" href="/survey/summary.csv" target="_blank" rel="noopener noreferrer">导出 CSV</a>
+            </div>
+            <div id="surveySummaryCards" class="summary-grid"></div>
+            <div id="surveyRiskList" class="history-list"></div>
         </section>
     </main>
 

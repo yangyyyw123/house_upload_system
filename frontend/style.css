@@ -130,7 +130,9 @@ h3 {
 .result-card,
 .trend-card,
 .history-item,
-.guide-card {
+.guide-card,
+.target-preview-card,
+.target-meta-card {
     background: #f8fbfc;
     border: 1px solid rgba(20, 58, 92, 0.1);
     border-radius: 18px;
@@ -298,6 +300,62 @@ button:disabled {
     padding: 18px;
 }
 
+.target-result {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    gap: 16px;
+    margin-top: 18px;
+}
+
+.target-preview-card,
+.target-meta-card {
+    padding: 18px;
+}
+
+.target-preview-card img {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid rgba(20, 58, 92, 0.1);
+    background: #fff;
+}
+
+.target-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.target-meta-grid article {
+    padding: 14px;
+    border-radius: 14px;
+    background: #fff;
+}
+
+.target-meta-grid span {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.target-meta-grid strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 18px;
+}
+
+.target-meta-text {
+    margin: 16px 0 0;
+    color: var(--muted);
+    line-height: 1.7;
+}
+
+.target-link-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+}
+
 .upload-bundle,
 .bundle-quality-list,
 .batch-result-list {
@@ -337,6 +395,40 @@ button:disabled {
 .bundle-size-panel p {
     margin: 0;
     line-height: 1.7;
+}
+
+.target-precheck-panel {
+    grid-column: 1 / -1;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: #eef3f6;
+    color: var(--muted);
+}
+
+.target-precheck-panel strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--ink);
+}
+
+.target-precheck-panel p {
+    margin: 0;
+    line-height: 1.7;
+}
+
+.target-precheck-loading {
+    background: #fff5d9;
+    color: #8c5e08;
+}
+
+.target-precheck-success {
+    background: #e6f6f0;
+    color: #0b6a58;
+}
+
+.target-precheck-error {
+    background: #fde9e4;
+    color: #a12e24;
 }
 
 .bundle-size-good {
@@ -730,7 +822,9 @@ button:disabled {
     .result-notes,
     .quality-metrics,
     .result-meta,
-    .form-grid {
+    .form-grid,
+    .target-result,
+    .target-meta-grid {
         grid-template-columns: 1fr;
     }
 
