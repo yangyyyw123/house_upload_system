@@ -1,5 +1,7 @@
 let currentHouseId = null;
 let currentHouseNumber = "";
+let currentTaskCode = "";
+let taskPollTimer = null;
 const previewUrls = new Map();
 
 const BUNDLE_FIELDS = [
@@ -106,6 +108,129 @@ function resetBundleQualityPanel() {
     document.getElementById("bundleQualityList").innerHTML = "";
     setVisible("bundleQualityPanel", false);
     setVisible("overrideUploadButton", false);
+}
+
+function stopTaskPolling() {
+    if (taskPollTimer !== null) {
+        window.clearInterval(taskPollTimer);
+        taskPollTimer = null;
+    }
+}
+
+function getTaskStatusClass(task) {
+    if (task?.status === "completed") {
+        return task.has_errors ? "task-status-warning" : "task-status-success";
+    }
+    if (task?.status === "failed") {
+        return "task-status-error";
+    }
+    if (task?.status === "running") {
+        return "task-status-running";
+    }
+    return "task-status-idle";
+}
+
+function renderDetectionTaskStatus(task) {
+    const panel = document.getElementById("taskStatusPanel");
+    panel.className = `task-status-panel ${getTaskStatusClass(task)}`;
+    document.getElementById("taskStatusSummary").textContent = task?.message || "No task status available.";
+    document.getElementById("taskStatusCode").textContent = task?.task_code || "-";
+    document.getElementById("taskStatusBundle").textContent = task?.bundle_code || "-";
+    document.getElementById("taskStatusProgress").textContent =
+        task?.total_items ? `${task.processed_items || 0}/${task.total_items} (${task.progress_percent || 0}%)` : "-";
+    document.getElementById("taskStatusPhase").textContent = task?.status || "-";
+    document.getElementById("taskStatusTime").textContent = task?.completed_at || task?.started_at || task?.created_at || "-";
+    document.getElementById("taskStatusError").textContent = task?.error_detail || "";
+    setVisible("taskStatusPanel", true);
+}
+
+async function fetchDetectionTask(taskCode, { silent = false } = {}) {
+    if (!taskCode) {
+        if (!silent) {
+            setGlobalStatus("error", "Task code is required.");
+        }
+        return null;
+    }
+
+    try {
+        const response = await fetch(`/tasks/${encodeURIComponent(taskCode)}`);
+        const result = await parseResponsePayload(response);
+        if (!response.ok) {
+            if (!silent) {
+                setGlobalStatus("error", result.message || "Failed to load task status.");
+            }
+            return null;
+        }
+
+        currentTaskCode = result.task_code || taskCode;
+        document.getElementById("taskLookupCode").value = currentTaskCode;
+        renderDetectionTaskStatus(result);
+
+        if (Array.isArray(result.quality_results) && result.quality_results.length) {
+            renderBundleQualityResults(result.quality_results, false);
+        }
+
+        if (result.status === "completed") {
+            stopTaskPolling();
+            if (Array.isArray(result.results) && result.results.length) {
+                renderBatchUploadResult(result);
+            }
+            if (currentHouseId) {
+                await loadHouseDetections(currentHouseId);
+            }
+            setStatus(
+                "uploadStatus",
+                result.has_errors ? "warning" : "success",
+                result.has_errors ? "Task finished with partial errors." : "Task finished successfully."
+            );
+            setGlobalStatus(
+                result.has_errors ? "warning" : "success",
+                result.has_errors
+                    ? `Task ${currentTaskCode} finished with partial errors.`
+                    : `Task ${currentTaskCode} finished successfully.`
+            );
+        } else if (result.status === "failed") {
+            stopTaskPolling();
+            if (Array.isArray(result.results) && result.results.length) {
+                renderBatchUploadResult(result);
+            }
+            setStatus("uploadStatus", "error", result.message || "Task failed.");
+            setGlobalStatus("error", result.message || `Task ${currentTaskCode} failed.`);
+        } else if (!silent) {
+            setStatus("uploadStatus", "loading", result.message || "Task is in progress.");
+            setGlobalStatus("loading", `Task ${currentTaskCode} is ${result.status || "running"}.`);
+        }
+
+        return result;
+    } catch (error) {
+        if (!silent) {
+            setGlobalStatus("error", `Failed to load task status: ${error}`);
+        }
+        return null;
+    }
+}
+
+function startTaskPolling(taskCode) {
+    stopTaskPolling();
+    currentTaskCode = taskCode;
+    document.getElementById("taskLookupCode").value = taskCode;
+    taskPollTimer = window.setInterval(() => {
+        fetchDetectionTask(taskCode, { silent: true });
+    }, 2000);
+}
+
+async function queryDetectionTask() {
+    const taskCode = document.getElementById("taskLookupCode").value.trim();
+    if (!taskCode) {
+        setGlobalStatus("error", "Enter a task code first.");
+        return;
+    }
+
+    stopTaskPolling();
+    const task = await fetchDetectionTask(taskCode);
+    if (task && (task.status === "queued" || task.status === "running")) {
+        startTaskPolling(task.task_code || taskCode);
+    }
 }
 
 function renderMediumTargetPrecheck(kind, text) {
@@ -1119,7 +1244,8 @@ async function uploadPhoto(forceLowQuality = false) {
     );
 
     try {
-        const response = await fetch("/upload-batch", {
+        stopTaskPolling();
+        const response = await fetch("/tasks/upload-batch", {
             method: "POST",
             body: buildUploadFormData(forceLowQuality),
         });
@@ -1142,13 +1268,17 @@ async function uploadPhoto(forceLowQuality = false) {
             return;
         }
 
-        renderBundleQualityResults(result.results || []);
-        renderBatchUploadResult(result);
-        if (currentHouseId) {
-            await loadHouseDetections(currentHouseId);
-        }
-        setStatus("uploadStatus", "success", "三张图像检测完成，结果已更新到页面下方。");
-        setGlobalStatus("success", "长景 / 中景 / 近景三张图像均已完成批量检测。");
+        currentTaskCode = result.task_code || "";
+        document.getElementById("taskLookupCode").value = currentTaskCode;
+        renderDetectionTaskStatus(result);
+        renderBundleQualityResults(result.quality_results || []);
+        setStatus("uploadStatus", "loading", result.message || "Task queued.");
+        setGlobalStatus(
+            "loading",
+            currentTaskCode ? `Task ${currentTaskCode} queued. Status will refresh automatically.` : "Task queued."
+        );
+        startTaskPolling(currentTaskCode);
+        return;
     } catch (error) {
         setStatus("uploadStatus", "error", `批量上传失败：${error}`);
         setGlobalStatus("error", `批量上传失败：${error}`);

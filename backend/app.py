@@ -1,8 +1,10 @@
-import importlib.util
 import csv
+import importlib.util
 import json
 import sys
 import textwrap
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -63,6 +65,7 @@ db = SQLAlchemy(app)
 segmentation_service = CrackSegmentationService()
 quantification_service = CrackQuantificationService()
 target_generator_service = TargetGeneratorService(TARGET_ROOT)
+task_executor = ThreadPoolExecutor(max_workers=1)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
 QUALITY_GUIDANCE = {
@@ -188,6 +191,11 @@ def generate_detection_code(house_number: str | None) -> str:
 def generate_bundle_code(house_number: str | None) -> str:
     prefix = clean_text(house_number, "BUNDLE").upper().replace(" ", "")[:12] or "BUNDLE"
     return f"{prefix}-BATCH-{uuid4().hex[:6].upper()}"
+
+
+def generate_task_code(house_number: str | None) -> str:
+    prefix = clean_text(house_number, "TASK").upper().replace(" ", "")[:12] or "TASK"
+    return f"{prefix}-TASK-{uuid4().hex[:8].upper()}"
 
 
 def collect_upload_metadata(form_data) -> dict[str, str]:
@@ -1999,6 +2007,7 @@ class HouseInfo(db.Model):
     upload_time = db.Column(db.DateTime, server_default=db.func.now())
     crack_results = db.relationship("CrackDetectionResults", backref="house_info", lazy=True)
     image_detections = db.relationship("ImageSegmentationRecord", backref="house_info", lazy=True)
+    detection_tasks = db.relationship("DetectionTask", backref="house_info", lazy=True)
 
 
 class CrackDetectionResults(db.Model):
@@ -2010,6 +2019,31 @@ class CrackDetectionResults(db.Model):
     crack_length = db.Column(db.Float)
     crack_angle = db.Column(db.Float)
     damage_level = db.Column(db.String(50))
+
+
+class DetectionTask(db.Model):
+    __tablename__ = "detection_task"
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_code = db.Column(db.String(40), unique=True, nullable=False)
+    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
+    bundle_code = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(20), default="queued", nullable=False)
+    status_message = db.Column(db.String(500))
+    total_items = db.Column(db.Integer, default=0)
+    processed_items = db.Column(db.Integer, default=0)
+    allow_low_quality = db.Column(db.Boolean, default=False)
+    run_segmentation = db.Column(db.Boolean, default=True)
+    request_metadata_json = db.Column(db.Text)
+    upload_items_json = db.Column(db.Text)
+    quality_results_json = db.Column(db.Text)
+    results_json = db.Column(db.Text)
+    bundle_projection_json = db.Column(db.Text)
+    result_status_code = db.Column(db.Integer)
+    error_detail = db.Column(db.Text)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
 
 class ImageSegmentationRecord(db.Model):
@@ -2266,6 +2300,145 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
         "risk_distribution": risk_distribution,
         "high_risk_houses": high_risk_houses[:20],
     }
+
+
+def serialize_detection_task(task: "DetectionTask", include_results: bool | None = None) -> dict[str, object]:
+    if include_results is None:
+        include_results = task.status in {"completed", "failed"}
+
+    quality_results = decode_json(task.quality_results_json, [])
+    results = decode_json(task.results_json, [])
+    bundle_projection = decode_json(task.bundle_projection_json, None)
+    progress_percent = 0
+    if task.total_items:
+        progress_percent = min(100, round(task.processed_items / task.total_items * 100))
+    if task.status == "completed":
+        progress_percent = 100
+
+    payload = {
+        "task_code": task.task_code,
+        "status": task.status,
+        "message": task.status_message,
+        "house_id": task.house_id,
+        "bundle_code": task.bundle_code,
+        "total_items": task.total_items,
+        "processed_items": task.processed_items,
+        "progress_percent": progress_percent,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "result_status_code": task.result_status_code,
+        "has_errors": task.status == "failed" or task.result_status_code not in (None, 200),
+        "error_detail": task.error_detail,
+        "quality_results": quality_results,
+        "status_url": url_for("get_detection_task", task_code=task.task_code),
+    }
+
+    if include_results:
+        payload["results"] = results
+        payload["bundle_projection"] = bundle_projection or build_bundle_projection_unavailable("Projection not ready.")
+        payload["bundle_report_url"] = (
+            url_for("download_bundle_report", bundle_code=task.bundle_code)
+            if task.status == "completed" and task.bundle_code and results
+            else None
+        )
+    else:
+        payload["results"] = []
+        payload["bundle_projection"] = None
+        payload["bundle_report_url"] = None
+
+    return payload
+
+
+def enqueue_detection_task(task_id: int) -> None:
+    task_executor.submit(run_detection_task, task_id)
+
+
+def run_detection_task(task_id: int) -> None:
+    results: list[dict[str, object]] = []
+    status_code = 200
+
+    with app.app_context():
+        try:
+            with app.test_request_context("/"):
+                task = db.session.get(DetectionTask, task_id)
+                if task is None or task.status not in {"queued", "running"}:
+                    return
+
+                upload_items = decode_json(task.upload_items_json, [])
+                house = db.session.get(HouseInfo, task.house_id) if task.house_id else None
+
+                task.status = "running"
+                task.started_at = task.started_at or datetime.utcnow()
+                task.status_message = "Analysis is running."
+                db.session.commit()
+
+                for index, item in enumerate(upload_items, start=1):
+                    capture_scale = clean_text(item.get("capture_scale"), f"image-{index}")
+                    task.status_message = f"Processing {capture_scale} ({index}/{len(upload_items)})."
+                    db.session.commit()
+
+                    result_payload, item_status = process_saved_image(
+                        saved_path=Path(str(item["saved_path"])),
+                        original_name=str(item["original_name"]),
+                        house=house,
+                        metadata=dict(item["metadata"]),
+                        allow_low_quality=True,
+                        run_segmentation=bool(task.run_segmentation),
+                        bundle_code=task.bundle_code,
+                    )
+                    result_payload["capture_scale"] = capture_scale
+                    results.append(result_payload)
+                    if item_status != 200 and status_code == 200:
+                        status_code = item_status
+
+                    task.processed_items = index
+                    task.results_json = encode_json(results)
+                    task.result_status_code = status_code
+                    db.session.commit()
+
+                try:
+                    bundle_projection = build_bundle_projection_from_results(results, task.bundle_code)
+                except Exception as exc:  # pragma: no cover
+                    bundle_projection = build_bundle_projection_unavailable(f"Projection unavailable: {exc}")
+
+                task.processed_items = len(upload_items)
+                task.results_json = encode_json(results)
+                task.bundle_projection_json = encode_json(bundle_projection)
+                task.result_status_code = status_code
+                task.status = "completed"
+                task.status_message = "Analysis completed." if status_code == 200 else "Analysis completed with errors."
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
+        except Exception:  # pragma: no cover
+            task = db.session.get(DetectionTask, task_id)
+            if task is not None:
+                task.status = "failed"
+                task.status_message = "Analysis failed."
+                task.processed_items = len(results)
+                task.results_json = encode_json(results)
+                task.result_status_code = status_code if status_code != 200 else 500
+                task.error_detail = traceback.format_exc()
+                task.completed_at = datetime.utcnow()
+                db.session.commit()
+        finally:
+            db.session.remove()
+
+
+def recover_incomplete_detection_tasks() -> None:
+    with app.app_context():
+        stale_tasks = DetectionTask.query.filter(DetectionTask.status.in_(["queued", "running"])).all()
+        if not stale_tasks:
+            return
+
+        recovered_at = datetime.utcnow()
+        for task in stale_tasks:
+            task.status = "failed"
+            task.status_message = "Task interrupted before completion."
+            task.result_status_code = task.result_status_code or 500
+            task.error_detail = task.error_detail or "The service restarted while this task was pending."
+            task.completed_at = recovered_at
+        db.session.commit()
 
 
 def resolve_house_from_request(house_id_value: str | None) -> tuple["HouseInfo | None", tuple[dict, int] | None]:
@@ -2570,6 +2743,116 @@ def upload_batch():
         ),
         status_code,
     )
+
+
+@app.route("/tasks/upload-batch", methods=["POST"])
+def create_detection_task():
+    ensure_runtime_directories()
+    allow_low_quality = request.form.get("allow_low_quality", "false").lower() == "true"
+    run_segmentation = request.form.get("run_segmentation", "true").lower() != "false"
+    base_metadata = collect_upload_metadata(request.form)
+    house, error = resolve_house_from_request(request.form.get("house_id"))
+    if error:
+        return jsonify(error[0]), error[1]
+
+    bundle_code = generate_bundle_code(house.house_number if house else "BUNDLE")
+    task_code = generate_task_code(house.house_number if house else "TASK")
+    saved_items: list[dict[str, object]] = []
+
+    for field_name, capture_scale in BUNDLE_CAPTURE_SCALES:
+        if field_name not in request.files:
+            return jsonify({"message": f"Missing {capture_scale} image."}), 400
+
+        file = request.files[field_name]
+        if file.filename == "":
+            return jsonify({"message": f"{capture_scale} image is empty."}), 400
+        if not allowed_file(file.filename):
+            return jsonify({"message": f"{capture_scale} image format is invalid."}), 400
+
+        original_name, saved_path = save_uploaded_file(file)
+        metadata = {
+            **base_metadata,
+            "capture_scale": capture_scale,
+        }
+        quality_report = analyze_image_quality(saved_path)
+        saved_items.append(
+            {
+                "capture_scale": capture_scale,
+                "original_name": original_name,
+                "saved_path": str(saved_path),
+                "metadata": metadata,
+                "quality_report": serialize_quality_report(quality_report),
+            }
+        )
+
+    rejected_items = [item for item in saved_items if item["quality_report"]["status"] == "reject"]
+    if rejected_items and not allow_low_quality:
+        for item in saved_items:
+            Path(str(item["saved_path"])).unlink(missing_ok=True)
+        return (
+            jsonify(
+                {
+                    "message": "At least one image failed precheck. Re-upload or force analysis.",
+                    "results": [
+                        {
+                            "capture_scale": item["capture_scale"],
+                            "original_filename": item["original_name"],
+                            "quality_report": item["quality_report"],
+                        }
+                        for item in saved_items
+                    ],
+                }
+            ),
+            422,
+        )
+
+    task = DetectionTask(
+        task_code=task_code,
+        house_id=house.id if house else None,
+        bundle_code=bundle_code,
+        status="queued",
+        status_message="Task queued for analysis.",
+        total_items=len(saved_items),
+        processed_items=0,
+        allow_low_quality=allow_low_quality,
+        run_segmentation=run_segmentation,
+        request_metadata_json=encode_json(base_metadata),
+        upload_items_json=encode_json(
+            [
+                {
+                    "capture_scale": item["capture_scale"],
+                    "original_name": item["original_name"],
+                    "saved_path": item["saved_path"],
+                    "metadata": item["metadata"],
+                }
+                for item in saved_items
+            ]
+        ),
+        quality_results_json=encode_json(
+            [
+                {
+                    "capture_scale": item["capture_scale"],
+                    "original_filename": item["original_name"],
+                    "quality_report": item["quality_report"],
+                }
+                for item in saved_items
+            ]
+        ),
+        results_json=encode_json([]),
+    )
+    db.session.add(task)
+    db.session.commit()
+    enqueue_detection_task(task.id)
+
+    return jsonify(serialize_detection_task(task, include_results=False)), 202
+
+
+@app.route("/tasks/<task_code>", methods=["GET"])
+def get_detection_task(task_code: str):
+    task = DetectionTask.query.filter_by(task_code=task_code).first()
+    if task is None:
+        return jsonify({"message": "Detection task not found"}), 404
+    return jsonify(serialize_detection_task(task))
 
 
 @app.route("/files/<path:filename>", methods=["GET"])
@@ -2964,10 +3247,12 @@ def index():
 
 ensure_database_tables()
 ensure_sqlite_columns()
+recover_incomplete_detection_tasks()
 
 
 if __name__ == "__main__":
     ensure_runtime_directories()
     ensure_database_tables()
     ensure_sqlite_columns()
+    recover_incomplete_detection_tasks()
     app.run(debug=False, use_reloader=False)

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260331-quant-stage-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260415-task-flow-1') }}">
 </head>
 <body>
     <main class="page">
@@ -244,6 +244,42 @@
                     </button>
                 </div>
 
+                <div class="task-query-panel">
+                    <strong>Detection Task</strong>
+                    <div class="task-query-row">
+                        <input type="text" id="taskLookupCode" placeholder="Enter task code">
+                        <button type="button" class="secondary-button" onclick="queryDetectionTask()">Query Task</button>
+                    </div>
+                    <p class="hint">After upload, the system returns a task code that can be used to check progress later.</p>
+                </div>
+
+                <div id="taskStatusPanel" class="task-status-panel hidden">
+                    <div class="task-status-head">
+                        <strong>Task Status</strong>
+                        <span id="taskStatusPhase">-</span>
+                    </div>
+                    <p id="taskStatusSummary">No task status available.</p>
+                    <div class="task-status-grid">
+                        <article>
+                            <span>Task Code</span>
+                            <strong id="taskStatusCode">-</strong>
+                        </article>
+                        <article>
+                            <span>Bundle Code</span>
+                            <strong id="taskStatusBundle">-</strong>
+                        </article>
+                        <article>
+                            <span>Progress</span>
+                            <strong id="taskStatusProgress">-</strong>
+                        </article>
+                        <article>
+                            <span>Updated At</span>
+                            <strong id="taskStatusTime">-</strong>
+                        </article>
+                    </div>
+                    <p id="taskStatusError" class="task-status-error-text"></p>
+                </div>
+
                 <div class="action-row">
                     <button id="uploadButton" type="button" onclick="uploadPhoto()">上传长景/中景/近景并分析</button>
                     <p class="hint">
@@ -300,6 +336,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', filename='script.js', v='20260331-quant-stage-1') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v='20260415-task-flow-1') }}"></script>
 </body>
 </html>

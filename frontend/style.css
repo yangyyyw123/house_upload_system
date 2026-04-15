@@ -446,6 +446,87 @@ button:disabled {
     color: #a12e24;
 }
 
+.task-query-panel,
+.task-status-panel {
+    grid-column: 1 / -1;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: #eef3f6;
+}
+
+.task-query-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.task-query-row input {
+    flex: 1;
+}
+
+.task-status-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.task-status-head span {
+    font-weight: 700;
+}
+
+.task-status-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.task-status-grid article {
+    padding: 14px;
+    border-radius: 14px;
+    background: #fff;
+}
+
+.task-status-grid span {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.task-status-grid strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 18px;
+}
+
+.task-status-error-text {
+    margin: 12px 0 0;
+    color: #a12e24;
+    white-space: pre-wrap;
+}
+
+.task-status-idle {
+    background: #eef3f6;
+    color: var(--muted);
+}
+
+.task-status-running,
+.task-status-warning {
+    background: #fff4d8;
+    color: #996300;
+}
+
+.task-status-success {
+    background: #e6f6f0;
+    color: #0b6a58;
+}
+
+.task-status-error {
+    background: #fde9e4;
+    color: #a12e24;
+}
+
 .preview-head,
 .quality-header,
 .history-header,
@@ -937,6 +1018,7 @@ button:disabled {
     .result-notes,
     .quality-metrics,
     .result-meta,
+    .task-status-grid,
     .form-grid,
     .target-result,
     .target-meta-grid {
@@ -949,5 +1031,9 @@ button:disabled {
 
     .action-row button {
         max-width: none;
+    }
+
+    .task-query-row {
+        flex-direction: column;
     }
 }
