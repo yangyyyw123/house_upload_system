@@ -2,15 +2,16 @@ import csv
 import importlib.util
 import json
 import os
+import socket
 import sys
 import textwrap
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from uuid import uuid4
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import cv2
 import numpy as np
@@ -40,9 +41,9 @@ except ImportError:
     from crack_quantification_service import CrackQuantificationService, QuantificationError
 
 try:
-    from .target_generator_service import TargetGenerationError, TargetGeneratorService
+    from .target_generator_service import TARGET_SPECS, TargetGenerationError, TargetGeneratorService
 except ImportError:
-    from target_generator_service import TargetGenerationError, TargetGeneratorService
+    from target_generator_service import TARGET_SPECS, TargetGenerationError, TargetGeneratorService
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -69,7 +70,11 @@ quantification_service = CrackQuantificationService()
 target_generator_service = TargetGeneratorService(TARGET_ROOT)
 task_executor = ThreadPoolExecutor(max_workers=1)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
-APP_TIMEZONE = ZoneInfo(os.environ.get("APP_TIMEZONE", "Asia/Shanghai"))
+APP_TIMEZONE_NAME = os.environ.get("APP_TIMEZONE", "Asia/Shanghai")
+try:
+    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    APP_TIMEZONE = timezone(timedelta(hours=8)) if APP_TIMEZONE_NAME == "Asia/Shanghai" else timezone.utc
 
 QUALITY_GUIDANCE = {
     "good": "图像质量通过，可继续自动分析。",
@@ -110,6 +115,12 @@ BUNDLE_CAPTURE_SCALES = [
     ("medium_view", "中景"),
     ("close_view", "近景"),
 ]
+CAPTURE_SCALE_LABELS = {key: label for key, label in BUNDLE_CAPTURE_SCALES}
+MARKER_MODE_LABELS = {
+    "qr_anchor_rectified": "二维码 + 四角校正",
+    "qr_decode": "二维码解码",
+    "legacy_rect": "旧版靶标识别",
+}
 
 BUNDLE_PROJECTION_COLORS = {
     "中景": (44, 163, 242),
@@ -133,6 +144,60 @@ def build_file_url(path: Path) -> str | None:
     except ValueError:
         return None
     return url_for("uploaded_file", filename=relative_path.as_posix())
+
+
+def detect_local_ipv4() -> str | None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            ip_address = clean_text(sock.getsockname()[0])
+            if ip_address and not ip_address.startswith(("127.", "169.254.")):
+                return ip_address
+    except OSError:
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET):
+            ip_address = clean_text(info[4][0])
+            if ip_address and not ip_address.startswith(("127.", "169.254.")):
+                return ip_address
+    except OSError:
+        pass
+    return None
+
+
+def format_capture_scale_label(value: str | None) -> str:
+    return CAPTURE_SCALE_LABELS.get(clean_text(value), clean_text(value, "-"))
+
+
+def format_marker_mode_label(value: str | None) -> str:
+    return MARKER_MODE_LABELS.get(clean_text(value), clean_text(value, "-"))
+
+
+def get_target_public_base_url() -> tuple[str, str | None]:
+    configured_base = clean_text(os.environ.get("TARGET_PUBLIC_BASE_URL") or os.environ.get("PUBLIC_BASE_URL"))
+    if configured_base:
+        return configured_base.rstrip("/"), None
+
+    base_url = request.host_url.rstrip("/")
+    host = clean_text(request.host.split(":", 1)[0]).lower()
+    warning = None
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        lan_ip = detect_local_ipv4()
+        if lan_ip:
+            port = request.host.split(":", 1)[1] if ":" in request.host else ""
+            port_suffix = f":{port}" if port else ""
+            warning = f"当前通过 localhost 访问，二维码已自动改写为局域网地址 {lan_ip}{port_suffix}，手机与电脑需处于同一网络。"
+            return f"{request.scheme}://{lan_ip}{port_suffix}", warning
+
+        warning = "当前二维码详情链接使用 localhost，仅本机可访问。请配置 TARGET_PUBLIC_BASE_URL 或改用局域网 IP 打开系统。"
+    return base_url, warning
+
+
+def build_target_public_url(target_id: str) -> tuple[str, str | None]:
+    base_url, warning = get_target_public_base_url()
+    relative_path = url_for("view_qr_target", target_id=target_id)
+    return f"{base_url}{relative_path}", warning
 
 
 def get_runtime_dependency_status() -> dict[str, bool]:
@@ -1286,6 +1351,27 @@ def format_datetime_value(value: datetime | None, include_seconds: bool = True) 
     return local_value.strftime("%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M")
 
 
+def parse_local_datetime_input(value: str | None) -> datetime | None:
+    text = clean_text(value)
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            local_value = datetime.strptime(text, fmt).replace(tzinfo=APP_TIMEZONE)
+        except ValueError:
+            continue
+        return local_value.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return None
+
+
+def format_datetime_local_input(value: datetime | None) -> str:
+    local_value = to_local_datetime(value)
+    if local_value is None:
+        return ""
+    return local_value.strftime("%Y-%m-%dT%H:%M")
+
+
 def get_record_uploaded_at(record: "ImageSegmentationRecord") -> datetime | None:
     return record.uploaded_at or record.created_at
 
@@ -2099,6 +2185,7 @@ class HouseInfo(db.Model):
     crack_results = db.relationship("CrackDetectionResults", backref="house_info", lazy=True)
     image_detections = db.relationship("ImageSegmentationRecord", backref="house_info", lazy=True)
     detection_tasks = db.relationship("DetectionTask", backref="house_info", lazy=True)
+    qr_targets = db.relationship("QrTarget", backref="house_info", lazy=True)
 
 
 class CrackDetectionResults(db.Model):
@@ -2137,6 +2224,26 @@ class DetectionTask(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
 
+class QrTarget(db.Model):
+    __tablename__ = "qr_target"
+
+    id = db.Column(db.Integer, primary_key=True)
+    target_id = db.Column(db.String(40), unique=True, nullable=False)
+    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
+    house_number = db.Column(db.String(50), nullable=False)
+    inspection_region = db.Column(db.String(120), nullable=False)
+    scene_type = db.Column(db.String(50), nullable=False)
+    inspection_at = db.Column(db.DateTime)
+    report_reference = db.Column(db.String(120))
+    notes = db.Column(db.Text)
+    spec_key = db.Column(db.String(40))
+    qr_payload = db.Column(db.Text)
+    preview_path = db.Column(db.String(500))
+    pdf_path = db.Column(db.String(500))
+    manifest_path = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+
 class ImageSegmentationRecord(db.Model):
     __tablename__ = "image_segmentation_record"
 
@@ -2144,6 +2251,7 @@ class ImageSegmentationRecord(db.Model):
     house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
     upload_bundle_code = db.Column(db.String(50))
     detection_code = db.Column(db.String(40), unique=True, nullable=False)
+    target_id = db.Column(db.String(40))
     analysis_status = db.Column(db.String(20), default="completed")
     original_filename = db.Column(db.String(255), nullable=False)
     source_image_path = db.Column(db.String(500), nullable=False)
@@ -2194,6 +2302,7 @@ def ensure_sqlite_columns() -> None:
     migrations = {
         "image_segmentation_record": {
             "detection_code": "TEXT",
+            "target_id": "TEXT",
             "upload_bundle_code": "TEXT",
             "uploaded_at": "DATETIME",
             "analysis_status": "TEXT DEFAULT 'completed'",
@@ -2225,7 +2334,22 @@ def ensure_sqlite_columns() -> None:
             "crack_length_mm": "FLOAT",
             "quant_overlay_path": "TEXT",
             "width_chart_path": "TEXT",
-        }
+        },
+        "qr_target": {
+            "house_id": "INTEGER",
+            "house_number": "TEXT",
+            "inspection_region": "TEXT",
+            "scene_type": "TEXT",
+            "inspection_at": "DATETIME",
+            "report_reference": "TEXT",
+            "notes": "TEXT",
+            "spec_key": "TEXT",
+            "qr_payload": "TEXT",
+            "preview_path": "TEXT",
+            "pdf_path": "TEXT",
+            "manifest_path": "TEXT",
+            "created_at": "DATETIME",
+        },
     }
 
     with app.app_context():
@@ -2307,6 +2431,7 @@ def serialize_segmentation_record(
         "marker_count": record.marker_count,
         "physical_scale_mm_per_pixel": record.physical_scale_mm_per_pixel,
         "detection_method": detection_method,
+        "detection_method_label": format_marker_mode_label(detection_method),
         "perspective_corrected": perspective_corrected,
         "annotated_image_url": build_file_url(Path(record.target_overlay_path)) if record.target_overlay_path else None,
     }
@@ -2336,6 +2461,7 @@ def serialize_segmentation_record(
         "id": record.id,
         "house_id": record.house_id,
         "upload_bundle_code": record.upload_bundle_code,
+        "target_id": record.target_id,
         "bundle_report_url": url_for("download_bundle_report", bundle_code=record.upload_bundle_code)
         if record.upload_bundle_code
         else None,
@@ -2351,6 +2477,7 @@ def serialize_segmentation_record(
         "inference_device": record.inference_device,
         "patch_count": record.patch_count,
         "capture_scale": record.capture_scale,
+        "capture_scale_label": format_capture_scale_label(record.capture_scale),
         "component_type": record.component_type,
         "scenario_type": record.scenario_type,
         "quality_score": record.quality_score,
@@ -2524,6 +2651,110 @@ def serialize_detection_task(task: "DetectionTask", include_results: bool | None
     return payload
 
 
+def get_target_spec_payload(spec_key: str | None) -> dict[str, object] | None:
+    spec = TARGET_SPECS.get(clean_text(spec_key))
+    if spec is None:
+        return None
+    return target_generator_service._serialize_spec(spec)
+
+
+def build_qr_target_payload(target: "QrTarget") -> dict[str, object]:
+    exact_records = (
+        ImageSegmentationRecord.query.filter_by(target_id=target.target_id, analysis_status="completed")
+        .order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
+        .all()
+    )
+    house_records = (
+        ImageSegmentationRecord.query.filter_by(house_id=target.house_id, analysis_status="completed")
+        .order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
+        .all()
+        if target.house_id
+        else []
+    )
+
+    if exact_records:
+        record_source = "same_target"
+        display_records = exact_records[:8]
+    elif house_records:
+        record_source = "same_house"
+        display_records = house_records[:8]
+    else:
+        record_source = "none"
+        display_records = []
+
+    latest_record = display_records[0] if display_records else None
+    latest_record_payload = serialize_segmentation_record(latest_record) if latest_record else None
+    house = db.session.get(HouseInfo, target.house_id) if target.house_id else None
+    detail_url, _warning = build_target_public_url(target.target_id)
+    target_status = "待检测"
+    target_status_tone = "neutral"
+    if exact_records:
+        target_status = "已关联本靶标报告"
+        target_status_tone = "safe"
+    elif house_records:
+        target_status = "已关联同房屋历史"
+        target_status_tone = "warning"
+
+    return {
+        "target_id": target.target_id,
+        "house_id": target.house_id,
+        "house_number": target.house_number,
+        "house_type": house.house_type if house else None,
+        "crack_location": house.crack_location if house else None,
+        "detection_type": house.detection_type if house else None,
+        "inspection_region": target.inspection_region,
+        "scene_type": target.scene_type,
+        "inspection_at": serialize_datetime_value(target.inspection_at),
+        "inspection_at_display": format_datetime_value(target.inspection_at, include_seconds=False)
+        if target.inspection_at
+        else "-",
+        "report_reference": target.report_reference,
+        "notes": target.notes,
+        "spec": get_target_spec_payload(target.spec_key),
+        "created_at": serialize_datetime_value(target.created_at),
+        "created_at_display": format_datetime_value(target.created_at),
+        "scan_url": detail_url,
+        "detail_url": detail_url,
+        "api_url": url_for("get_qr_target_data", target_id=target.target_id),
+        "preview_url": build_file_url(Path(target.preview_path)) if target.preview_path else None,
+        "pdf_url": build_file_url(Path(target.pdf_path)) if target.pdf_path else None,
+        "manifest_url": build_file_url(Path(target.manifest_path)) if target.manifest_path else None,
+        "target_status": target_status,
+        "target_status_tone": target_status_tone,
+        "record_source": record_source,
+        "record_source_label": {
+            "same_target": "当前靶标对应的检测记录",
+            "same_house": "当前房屋的最新检测记录",
+            "none": "暂无检测记录",
+        }.get(record_source, "暂无检测记录"),
+        "latest_report_url": url_for("download_detection_report", record_id=latest_record.id) if latest_record else None,
+        "latest_report_view_url": (
+            url_for("download_detection_report", record_id=latest_record.id, download=0) if latest_record else None
+        ),
+        "latest_bundle_report_url": (
+            url_for("download_bundle_report", bundle_code=latest_record.upload_bundle_code)
+            if latest_record and latest_record.upload_bundle_code
+            else None
+        ),
+        "latest_detection_code": latest_record.detection_code if latest_record else None,
+        "latest_risk_level": latest_record.risk_level if latest_record else None,
+        "latest_risk_summary": latest_record.risk_summary if latest_record else None,
+        "latest_recommendation": latest_record.recommendation if latest_record else None,
+        "latest_generated_at_display": format_datetime_value(get_record_generated_at(latest_record)) if latest_record else "-",
+        "latest_capture_scale_label": format_capture_scale_label(latest_record.capture_scale) if latest_record else "-",
+        "latest_component_type": latest_record.component_type if latest_record else None,
+        "latest_scenario_type": latest_record.scenario_type if latest_record else None,
+        "latest_max_width_mm": latest_record.max_width_mm if latest_record else None,
+        "latest_crack_length_mm": latest_record.crack_length_mm if latest_record else None,
+        "latest_quality_status": latest_record.quality_status if latest_record else None,
+        "latest_quality_score": latest_record.quality_score if latest_record else None,
+        "latest_record": latest_record_payload,
+        "records": [serialize_segmentation_record(record) for record in display_records],
+        "exact_record_count": len(exact_records),
+        "house_record_count": len(house_records),
+    }
+
+
 def enqueue_detection_task(task_id: int) -> None:
     task_executor.submit(run_detection_task, task_id)
 
@@ -2632,6 +2863,76 @@ def resolve_house_from_request(house_id_value: str | None) -> tuple["HouseInfo |
     return house, None
 
 
+def resolve_qr_target_house(house_id_value: str | None, house_number: str) -> "HouseInfo | None":
+    normalized_house_number = clean_text(house_number)
+    if normalized_house_number:
+        matched_by_number = HouseInfo.query.filter_by(house_number=normalized_house_number).first()
+        if matched_by_number is not None:
+            return matched_by_number
+
+    if not house_id_value:
+        return None
+
+    try:
+        house_id = int(house_id_value)
+    except ValueError:
+        return None
+
+    house = db.session.get(HouseInfo, house_id)
+    if house is None:
+        return None
+    if normalized_house_number and clean_text(house.house_number) != normalized_house_number:
+        return None
+    return house
+
+
+def extract_primary_target(marker_detection: dict[str, object] | None) -> dict[str, str]:
+    targets = (marker_detection or {}).get("targets") or []
+    if not isinstance(targets, list):
+        return {}
+
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        target_id = clean_text(target.get("target_id"))
+        house_number = clean_text(target.get("house_number"))
+        scene_type = clean_text(target.get("scene_type"))
+        if target_id or house_number:
+            return {
+                "target_id": target_id,
+                "house_number": house_number,
+                "scene_type": scene_type,
+            }
+    return {}
+
+
+def resolve_house_from_target(target_info: dict[str, str]) -> "HouseInfo | None":
+    target_id = clean_text(target_info.get("target_id"))
+    if target_id:
+        qr_target = QrTarget.query.filter_by(target_id=target_id).first()
+        if qr_target and qr_target.house_id:
+            return db.session.get(HouseInfo, qr_target.house_id)
+
+    house_number = clean_text(target_info.get("house_number"))
+    if house_number:
+        return HouseInfo.query.filter_by(house_number=house_number).first()
+    return None
+
+
+def bind_qr_target_house(target_id: str | None, house: "HouseInfo | None") -> None:
+    if not target_id or house is None:
+        return
+
+    qr_target = QrTarget.query.filter_by(target_id=target_id).first()
+    if qr_target is None:
+        return
+
+    if qr_target.house_id is None:
+        qr_target.house_id = house.id
+    if not clean_text(qr_target.house_number):
+        qr_target.house_number = house.house_number
+
+
 def get_recent_house_records(house_id: int | None, limit: int = 5) -> list["ImageSegmentationRecord"]:
     if not house_id:
         return []
@@ -2678,7 +2979,6 @@ def process_saved_image(
             422,
         )
 
-    detection_code = generate_detection_code(house.house_number if house else original_name)
     response_payload: dict[str, object] = {
         "message": "图像上传成功。",
         "original_filename": original_name,
@@ -2687,12 +2987,12 @@ def process_saved_image(
         "file_url": build_file_url(saved_path),
         "house_id": house.id if house else None,
         "upload_bundle_code": bundle_code,
-        "detection_code": detection_code,
         "metadata": metadata,
         "quality_report": serialize_quality_report(quality_report),
         "uploaded_at": serialize_datetime_value(uploaded_at),
         "uploaded_at_display": format_datetime_value(uploaded_at),
     }
+    response_payload["detection_code"] = generate_detection_code(house.house_number if house else original_name)
 
     if not run_segmentation:
         return response_payload, 200
@@ -2714,6 +3014,13 @@ def process_saved_image(
     quantification_result = run_quantification_analysis(saved_path, segmentation_result)
     marker_detection = quantification_result["marker_detection"]
     quantification = quantification_result["quantification"]
+    primary_target = extract_primary_target(marker_detection)
+    if house is None:
+        house = resolve_house_from_target(primary_target)
+    detection_code = generate_detection_code(house.house_number if house else original_name)
+    response_payload["house_id"] = house.id if house else None
+    response_payload["detection_code"] = detection_code
+    response_payload["target_id"] = clean_text(primary_target.get("target_id"))
     history_records = get_recent_house_records(house.id if house else None, limit=5)
     risk_assessment = assess_detection_risk(
         segmentation_result=segmentation_result,
@@ -2753,6 +3060,7 @@ def process_saved_image(
         house_id=house.id if house else None,
         upload_bundle_code=bundle_code,
         detection_code=detection_code,
+        target_id=clean_text(primary_target.get("target_id")),
         analysis_status="completed",
         original_filename=original_name,
         source_image_path=str(saved_path),
@@ -2794,6 +3102,7 @@ def process_saved_image(
         created_at=generated_at,
     )
     db.session.add(record)
+    bind_qr_target_house(clean_text(primary_target.get("target_id")), house)
     db.session.commit()
     response_payload["segmentation_record_id"] = record.id
     response_payload["report_url"] = url_for("download_detection_report", record_id=record.id)
@@ -3086,6 +3395,22 @@ def list_target_specs():
     return jsonify({"specs": target_generator_service.list_specs()})
 
 
+@app.route("/api/targets/<target_id>", methods=["GET"])
+def get_qr_target_data(target_id: str):
+    qr_target = QrTarget.query.filter_by(target_id=target_id).first()
+    if qr_target is None:
+        return jsonify({"message": "QR target not found"}), 404
+    return jsonify(build_qr_target_payload(qr_target))
+
+
+@app.route("/targets/<target_id>", methods=["GET"])
+def view_qr_target(target_id: str):
+    qr_target = QrTarget.query.filter_by(target_id=target_id).first()
+    if qr_target is None:
+        return render_template("target_detail.html", payload=None, target_id=target_id), 404
+    return render_template("target_detail.html", payload=build_qr_target_payload(qr_target), target_id=target_id)
+
+
 @app.route("/targets/generate", methods=["POST"])
 def generate_target():
     ensure_runtime_directories()
@@ -3094,6 +3419,9 @@ def generate_target():
     inspection_region = clean_text(data.get("inspection_region"))
     scene_type = clean_text(data.get("scene_type"))
     spec_key = clean_text(data.get("spec_key"), "square_80")
+    report_reference = clean_text(data.get("report_reference"))
+    notes = clean_text(data.get("notes"))
+    inspection_at = parse_local_datetime_input(data.get("inspection_at"))
 
     if not house_number:
         return jsonify({"message": "house_number 不能为空"}), 400
@@ -3101,6 +3429,14 @@ def generate_target():
         return jsonify({"message": "inspection_region 不能为空"}), 400
     if not scene_type:
         return jsonify({"message": "scene_type 不能为空"}), 400
+    if data.get("inspection_at") and inspection_at is None:
+        return jsonify({"message": "inspection_at 格式无效"}), 400
+
+    house = resolve_qr_target_house(data.get("house_id"), house_number)
+    target_id = f"TGT-{uuid4().hex[:10].upper()}"
+    created_at = utc_now()
+    created_at_text = serialize_datetime_value(created_at)
+    scan_url, scan_url_warning = build_target_public_url(target_id)
 
     try:
         result = target_generator_service.generate_target(
@@ -3108,6 +3444,12 @@ def generate_target():
             inspection_region=inspection_region,
             scene_type=scene_type,
             spec_key=spec_key,
+            target_id=target_id,
+            created_at=created_at_text,
+            scan_url=scan_url,
+            inspection_label=format_datetime_value(inspection_at, include_seconds=False) if inspection_at else None,
+            report_reference=report_reference or None,
+            notes=notes or None,
         )
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
@@ -3117,18 +3459,49 @@ def generate_target():
     png_path = Path(result["paths"]["png"])
     pdf_path = Path(result["paths"]["pdf"])
     manifest_path = Path(result["paths"]["manifest"])
+    qr_target = QrTarget(
+        target_id=result["target_id"],
+        house_id=house.id if house else None,
+        house_number=house_number,
+        inspection_region=inspection_region,
+        scene_type=scene_type,
+        inspection_at=inspection_at,
+        report_reference=report_reference or None,
+        notes=notes or None,
+        spec_key=spec_key,
+        qr_payload=result["qr_payload"],
+        preview_path=str(png_path),
+        pdf_path=str(pdf_path),
+        manifest_path=str(manifest_path),
+        created_at=created_at,
+    )
+    db.session.add(qr_target)
+    db.session.commit()
+
+    profile_payload = build_qr_target_payload(qr_target)
     return jsonify(
         {
             "message": "二维码靶标已生成",
             "target_id": result["target_id"],
             "payload": result["payload"],
+            "metadata": result.get("metadata") or {},
             "qr_payload": result["qr_payload"],
             "spec": result["spec"],
-            "preview_url": build_file_url(png_path),
+            "house_id": house.id if house else None,
+            "inspection_at": serialize_datetime_value(inspection_at),
+            "inspection_at_display": format_datetime_value(inspection_at, include_seconds=False) if inspection_at else "-",
+            "report_reference": report_reference or None,
+            "notes": notes or None,
+            "scan_url": scan_url,
+            "scan_url_warning": scan_url_warning,
+            "detail_url": profile_payload["detail_url"],
+            "api_url": profile_payload["api_url"],
+            "preview_url": profile_payload["preview_url"],
+            "profile": profile_payload,
             "files": {
-                "png_url": build_file_url(png_path),
-                "pdf_url": build_file_url(pdf_path),
-                "manifest_url": build_file_url(manifest_path),
+                "png_url": profile_payload["preview_url"],
+                "pdf_url": profile_payload["pdf_url"],
+                "manifest_url": profile_payload["manifest_url"],
             },
         }
     ), 201

@@ -571,6 +571,18 @@ function syncTargetHouseNumber(force = false) {
     updateFormValidationState("targetForm");
 }
 
+function setDefaultTargetInspectionTime() {
+    const input = document.getElementById("target_inspection_at");
+    if (!input || input.value) {
+        return;
+    }
+
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    const localTime = new Date(now.getTime() - offset * 60 * 1000);
+    input.value = localTime.toISOString().slice(0, 16);
+}
+
 function getAvailableTargetSpecs() {
     return Array.isArray(availableTargetSpecs) && availableTargetSpecs.length ? availableTargetSpecs : TARGET_SPEC_FALLBACKS;
 }
@@ -691,11 +703,16 @@ function renderTargetResult(payload) {
     const spec = payload.spec || {};
     const metaCards = [
         { label: "靶标编号", value: payload.target_id || "-" },
+        { label: "房屋编号", value: payload.metadata?.house_number || payload.profile?.house_number || "-" },
         { label: "靶标规格", value: spec.label || "-" },
         { label: "靶标尺寸", value: formatTargetSize(spec) },
         { label: "二维码边长", value: spec.qr_size_mm ? `${spec.qr_size_mm} mm` : "-" },
         { label: "适用裂缝", value: spec.crack_size_label || "-" },
+        { label: "检测时间", value: payload.inspection_at_display || payload.profile?.inspection_at_display || "-" },
+        { label: "报告编号", value: payload.report_reference || payload.profile?.report_reference || "-" },
     ];
+    const scanUrl = payload.scan_url || payload.detail_url || payload.profile?.detail_url || "";
+    const scanWarning = payload.scan_url_warning || "";
 
     container.innerHTML = `
         <div class="target-preview-card">
@@ -714,8 +731,11 @@ function renderTargetResult(payload) {
                     )
                     .join("")}
             </div>
-            <p class="target-meta-text">编码内容已写入二维码与 JSON 清单。建议优先下载 PDF 打印，PNG 用于预览和电子转发。</p>
+            <p class="target-meta-text">编码内容已写入二维码与 JSON 清单。建议优先下载 PDF 打印；扫码后可直接查看该靶标的档案信息和报告入口。</p>
+            ${scanUrl ? `<p class="target-meta-text target-scan-url"><strong>扫码详情页：</strong>${escapeHtml(scanUrl)}</p>` : ""}
+            ${scanWarning ? `<p class="target-meta-text target-scan-warning">${escapeHtml(scanWarning)}</p>` : ""}
             <div class="target-link-row">
+                ${payload.detail_url ? `<a class="button-link" href="${escapeHtml(payload.detail_url)}" target="_blank" rel="noopener noreferrer">打开详情页</a>` : ""}
                 ${files.pdf_url ? `<a class="button-link" href="${escapeHtml(files.pdf_url)}" target="_blank" rel="noopener noreferrer">下载 PDF</a>` : ""}
                 ${files.png_url ? `<a class="button-link" href="${escapeHtml(files.png_url)}" target="_blank" rel="noopener noreferrer">下载 PNG</a>` : ""}
                 ${files.manifest_url ? `<a class="button-link" href="${escapeHtml(files.manifest_url)}" target="_blank" rel="noopener noreferrer">查看 JSON</a>` : ""}
@@ -763,11 +783,14 @@ async function generateTarget() {
     const houseNumber = document.getElementById("target_house_number").value.trim();
     const inspectionRegion = document.getElementById("target_region").value.trim();
     const sceneType = document.getElementById("target_scene_type").value;
+    const inspectionAt = document.getElementById("target_inspection_at").value;
+    const reportReference = document.getElementById("target_report_reference").value.trim();
+    const notes = document.getElementById("target_notes").value.trim();
     const specKey = document.getElementById("target_spec").value;
 
-    if (!houseNumber || !inspectionRegion || !sceneType || !specKey) {
+    if (!houseNumber || !inspectionRegion || !sceneType || !inspectionAt || !specKey) {
         focusFirstMissingField("targetForm");
-        setStatus("targetStatus", "error", "请完整填写房屋编号、检测区域、场景类型和靶标规格。");
+        setStatus("targetStatus", "error", "请完整填写房屋编号、检测时间、检测区域、场景类型和靶标规格。");
         setGlobalStatus("error", "二维码靶标生成参数不完整。");
         return;
     }
@@ -781,9 +804,13 @@ async function generateTarget() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                house_id: currentHouseId,
                 house_number: houseNumber,
                 inspection_region: inspectionRegion,
                 scene_type: sceneType,
+                inspection_at: inspectionAt,
+                report_reference: reportReference,
+                notes,
                 spec_key: specKey,
             }),
         });
@@ -796,8 +823,8 @@ async function generateTarget() {
         }
 
         renderTargetResult(result);
-        setStatus("targetStatus", "success", "二维码靶标已生成，可直接下载 PNG / PDF。");
-        setGlobalStatus("success", "二维码靶标已生成。建议先打印靶标，再进行中景与近景拍摄。");
+        setStatus("targetStatus", "success", "二维码靶标已生成，可直接下载打印并扫码查看详情。");
+        setGlobalStatus("success", "二维码靶标已生成。建议先打印并张贴靶标，再进行中景与近景拍摄。");
     } catch (error) {
         setStatus("targetStatus", "error", `二维码靶标生成失败：${error}`);
         setGlobalStatus("error", `二维码靶标生成失败：${error}`);
@@ -2250,6 +2277,7 @@ async function rerunDetection(recordId) {
 
 arrangeSplitPreviewWorkspace();
 updateHouseBinding(null, "");
+setDefaultTargetInspectionTime();
 updateBundleSizeSummary();
 resetMediumTargetPrecheck();
 loadTargetSpecs();

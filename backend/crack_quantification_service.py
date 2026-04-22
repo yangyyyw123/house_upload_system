@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
 
 import cv2
 import numpy as np
@@ -672,10 +673,46 @@ class CrackQuantificationService:
         try:
             payload = json.loads(decoded_text)
         except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+
+        parsed_url = urlparse(decoded_text)
+        if not parsed_url.scheme or not parsed_url.netloc:
             return None
-        if not isinstance(payload, dict):
+
+        path_segments = [segment for segment in parsed_url.path.split("/") if segment]
+        target_id = None
+        if len(path_segments) >= 2 and path_segments[-2] == "targets":
+            target_id = unquote(path_segments[-1])
+        elif path_segments:
+            target_id = unquote(path_segments[-1])
+
+        query = parse_qs(parsed_url.query)
+
+        def get_float(name: str) -> float | None:
+            values = query.get(name)
+            if not values:
+                return None
+            try:
+                return float(values[0])
+            except (TypeError, ValueError):
+                return None
+
+        qr_size_mm = get_float("q") or get_float("qr") or get_float("qr_size_mm")
+        frame_size_mm = get_float("f") or get_float("frame") or get_float("frame_size_mm")
+        anchor_size_mm = get_float("a") or get_float("anchor") or get_float("anchor_size_mm")
+        if qr_size_mm is None:
             return None
-        return payload
+
+        return {
+            "v": int((query.get("v") or ["2"])[0] or 2),
+            "target_id": target_id,
+            "qr_size_mm": qr_size_mm,
+            "frame_size_mm": frame_size_mm or qr_size_mm,
+            "anchor_size_mm": anchor_size_mm or 0.0,
+            "scan_url": decoded_text,
+        }
 
     def _infer_marker_size(self, aspect_ratio: float) -> int | None:
         best_size = None

@@ -262,6 +262,12 @@
                         </article>
 
                         <article class="field-card">
+                            <label for="target_inspection_at">检测时间 Inspection Time</label>
+                            <input type="datetime-local" id="target_inspection_at" name="target_inspection_at" required>
+                            <p class="field-helper">扫码详情页会显示该时间，建议填写本次现场检测或计划检测时间。</p>
+                        </article>
+
+                        <article class="field-card">
                             <label for="target_crack_size">裂缝尺度 Crack Scale</label>
                             <select id="target_crack_size" name="target_crack_size" required>
                                 <option value="large">较大裂缝 / 大范围检测区</option>
@@ -278,13 +284,25 @@
                             <p id="target_spec_hint" class="field-helper">根据检测区域裂缝大小选择靶标尺寸。</p>
                         </article>
 
+                        <article class="field-card">
+                            <label for="target_report_reference">报告编号 Report Ref</label>
+                            <input type="text" id="target_report_reference" name="target_report_reference" placeholder="例如：RPT-2026-001">
+                            <p class="field-helper">可填写预设报告编号、工单号或现场记录号，后续扫码可直接回显。</p>
+                        </article>
+
+                        <article class="field-card field-card-wide">
+                            <label for="target_notes">补充说明 Notes</label>
+                            <textarea id="target_notes" name="target_notes" rows="3" placeholder="例如：东立面二层窗角裂缝，贴标后等待复检。"></textarea>
+                            <p class="field-helper">适合填写现场说明、检测目的或张贴位置备注，扫码后可直接查看。</p>
+                        </article>
+
                         <div class="field-card field-card-wide form-action-card">
                             <div>
-                                <strong>生成后可直接下载 PNG / PDF</strong>
-                                <p class="field-helper">建议先打印靶标再拍摄中景和近景，这样后续量化更稳定。</p>
+                                <strong>生成后可直接下载、打印并扫码回查</strong>
+                                <p class="field-helper">二维码会绑定靶标档案页，后续扫码可查看已填写信息、最新报告和同房屋历史。</p>
                             </div>
                             <button id="generateTargetButton" type="button" onclick="generateTarget()">生成二维码靶标</button>
-                            <p id="targetStatus" class="status status-idle">填写房屋编号、检测区域、裂缝尺度和场景类型后即可生成 PNG / PDF 靶标。</p>
+                            <p id="targetStatus" class="status status-idle">填写房屋编号、检测时间、检测区域和靶标参数后即可生成可扫码回显的靶标。</p>
                         </div>
                     </form>
                     </section>

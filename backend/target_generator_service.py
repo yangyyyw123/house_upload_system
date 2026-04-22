@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 import cv2
@@ -152,6 +153,13 @@ class TargetGeneratorService:
         inspection_region: str,
         scene_type: str,
         spec_key: str,
+        *,
+        target_id: str | None = None,
+        created_at: str | None = None,
+        scan_url: str | None = None,
+        inspection_label: str | None = None,
+        report_reference: str | None = None,
+        notes: str | None = None,
     ) -> dict[str, Any]:
         house_number = house_number.strip()
         inspection_region = inspection_region.strip()
@@ -167,21 +175,18 @@ class TargetGeneratorService:
         if spec is None:
             raise ValueError("unsupported spec_key")
 
-        created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        target_id = f"TGT-{uuid4().hex[:10].upper()}"
+        created_at = created_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        target_id = target_id or f"TGT-{uuid4().hex[:10].upper()}"
         payload = {
-            "v": 1,
+            "v": 2,
             "target_id": target_id,
             "house_number": house_number,
-            "inspection_region": inspection_region,
             "scene_type": scene_type,
-            "spec_key": spec.key,
             "qr_size_mm": spec.qr_size_mm,
             "frame_size_mm": spec.frame_size_mm,
             "anchor_size_mm": spec.anchor_size_mm,
-            "created_at": created_at,
         }
-        qr_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        qr_payload = self._build_qr_payload(payload, scan_url)
 
         output_dir = self.output_root / target_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -194,6 +199,9 @@ class TargetGeneratorService:
             spec=spec,
             target_id=target_id,
             created_at=created_at,
+            inspection_label=inspection_label,
+            report_reference=report_reference,
+            scan_url=scan_url,
             qr_payload=qr_payload,
             qr_image=qr_image,
         )
@@ -209,6 +217,17 @@ class TargetGeneratorService:
             json.dumps(
                 {
                     "payload": payload,
+                    "metadata": {
+                        "house_number": house_number,
+                        "inspection_region": inspection_region,
+                        "scene_type": scene_type,
+                        "spec_key": spec.key,
+                        "inspection_label": inspection_label,
+                        "report_reference": report_reference,
+                        "notes": notes,
+                        "created_at": created_at,
+                        "scan_url": scan_url,
+                    },
                     "qr_payload": qr_payload,
                     "spec": {
                         **self._serialize_spec(spec),
@@ -227,6 +246,17 @@ class TargetGeneratorService:
         return {
             "target_id": target_id,
             "payload": payload,
+            "metadata": {
+                "house_number": house_number,
+                "inspection_region": inspection_region,
+                "scene_type": scene_type,
+                "spec_key": spec.key,
+                "inspection_label": inspection_label,
+                "report_reference": report_reference,
+                "notes": notes,
+                "created_at": created_at,
+                "scan_url": scan_url,
+            },
             "qr_payload": qr_payload,
             "spec": self._serialize_spec(spec),
             "paths": {
@@ -267,6 +297,40 @@ class TargetGeneratorService:
         qr_image = Image.fromarray(qr_matrix).convert("L")
         return qr_image.resize((qr_pixels, qr_pixels), Image.Resampling.NEAREST)
 
+    def _build_qr_payload(self, payload: dict[str, Any], scan_url: str | None) -> str:
+        if not scan_url:
+            fallback_payload = dict(payload)
+            return json.dumps(fallback_payload, ensure_ascii=False, separators=(",", ":"))
+
+        split_result = urlsplit(scan_url)
+        query_items = dict(parse_qsl(split_result.query, keep_blank_values=True))
+        query_items.update(
+            {
+                "v": str(payload.get("v") or 2),
+                "q": self._format_qr_number(payload.get("qr_size_mm")),
+                "f": self._format_qr_number(payload.get("frame_size_mm")),
+                "a": self._format_qr_number(payload.get("anchor_size_mm")),
+            }
+        )
+        rebuilt_query = urlencode(query_items)
+        return urlunsplit(
+            (
+                split_result.scheme,
+                split_result.netloc,
+                split_result.path,
+                rebuilt_query,
+                split_result.fragment,
+            )
+        )
+
+    @staticmethod
+    def _format_qr_number(value: Any) -> str:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return ""
+        return f"{numeric:g}"
+
     def _compose_page(
         self,
         house_number: str,
@@ -275,6 +339,9 @@ class TargetGeneratorService:
         spec: TargetSpec,
         target_id: str,
         created_at: str,
+        inspection_label: str | None,
+        report_reference: str | None,
+        scan_url: str | None,
         qr_payload: str,
         qr_image: Image.Image,
     ) -> Image.Image:
@@ -339,6 +406,10 @@ class TargetGeneratorService:
             ("靶标编号", target_id),
             ("生成时间", created_at),
         ]
+        if inspection_label:
+            meta_rows.insert(3, ("检测时间", inspection_label))
+        if report_reference:
+            meta_rows.append(("报告编号", report_reference))
         self._draw_meta_panel(
             draw=draw,
             left=outer_margin,
@@ -356,8 +427,14 @@ class TargetGeneratorService:
             fill="#516978",
             font=small_font,
         )
+        if scan_url:
+            scan_preview = scan_url if len(scan_url) <= 96 else f"{scan_url[:93]}..."
+            draw.text((outer_margin, footer_top + 28), f"扫码查看: {scan_preview}", fill="#516978", font=small_font)
+            payload_top = footer_top + 56
+        else:
+            payload_top = footer_top + 30
         payload_preview = qr_payload if len(qr_payload) <= 120 else f"{qr_payload[:117]}..."
-        draw.text((outer_margin, footer_top + 30), payload_preview, fill="#738896", font=mono_font)
+        draw.text((outer_margin, payload_top), payload_preview, fill="#738896", font=mono_font)
         return page
 
     def _verify_qr(self, page_image: Image.Image, qr_payload: str, spec: TargetSpec) -> None:
