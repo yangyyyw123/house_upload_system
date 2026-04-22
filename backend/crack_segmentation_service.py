@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,14 +32,20 @@ class CrackSegmentationService:
         model_path: Path | None = None,
         hyperparams_path: Path | None = None,
         threshold: float = 0.5,
+        device_preference: str | None = None,
     ) -> None:
         self.model_path = model_path or _pick_first_file("*_best_model.pth")
         self.hyperparams_path = hyperparams_path or _pick_first_file("*_hyperparams.json")
         self.threshold = threshold
+        requested_device = (device_preference or os.getenv("INFERENCE_DEVICE", "auto")).strip().lower()
         self._hyperparams: dict[str, Any] | None = None
         self._model: Any | None = None
         self._device: Any | None = None
+        self._device_name: str | None = None
+        self._device_reason: str | None = None
+        self._torch_cuda_version: str | None = None
         self._torch: Any | None = None
+        self.device_preference = requested_device or "auto"
 
     def segment_image(self, image_path: str | Path, output_root: str | Path) -> dict[str, Any]:
         image_path = Path(image_path).resolve()
@@ -85,6 +92,10 @@ class CrackSegmentationService:
             "crack_area_ratio": round(crack_area_ratio, 6),
             "threshold": self.threshold,
             "device": str(self._device),
+            "device_requested": self.device_preference,
+            "device_name": self._device_name,
+            "device_reason": self._device_reason,
+            "torch_cuda_version": self._torch_cuda_version,
         }
 
     def _get_hyperparams(self) -> dict[str, Any]:
@@ -108,7 +119,9 @@ class CrackSegmentationService:
             raise ModelConfigurationError(f"Unsupported model architecture: {model_arch_name}") from exc
 
         self._torch = torch
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._torch_cuda_version = getattr(torch.version, "cuda", None)
+        self._device, self._device_reason = self._resolve_device(torch)
+        self._device_name = self._resolve_device_name(torch, self._device)
         self._model = model_arch(
             encoder_name=hyperparams["pretrained_model_encoder"],
             encoder_weights=None,
@@ -122,6 +135,60 @@ class CrackSegmentationService:
         self._model.load_state_dict(checkpoint)
         self._model.eval()
         return self._model
+
+    def _resolve_device(self, torch: Any) -> tuple[Any, str]:
+        requested = self.device_preference
+        if requested in {"gpu", "cuda"}:
+            requested = "cuda"
+
+        if requested == "auto":
+            if getattr(torch.version, "cuda", None) is None:
+                return torch.device("cpu"), "auto-selected cpu because the installed PyTorch build is CPU-only"
+            if not torch.cuda.is_available():
+                return torch.device("cpu"), "auto-selected cpu because PyTorch cannot access a CUDA device"
+            return torch.device("cuda"), "auto-selected cuda because a CUDA-capable GPU is available"
+
+        if requested == "cpu":
+            return torch.device("cpu"), "forced to cpu by INFERENCE_DEVICE"
+
+        try:
+            device = torch.device(requested)
+        except RuntimeError as exc:
+            raise ModelConfigurationError(
+                f"Unsupported INFERENCE_DEVICE '{self.device_preference}'. Use auto, cpu, cuda, or cuda:<index>."
+            ) from exc
+
+        if device.type != "cuda":
+            raise ModelConfigurationError(
+                f"Unsupported INFERENCE_DEVICE '{self.device_preference}'. Use auto, cpu, cuda, or cuda:<index>."
+            )
+
+        if getattr(torch.version, "cuda", None) is None:
+            raise InferenceDependencyError(
+                "INFERENCE_DEVICE requests CUDA, but the installed PyTorch build is CPU-only. "
+                "Install a CUDA-enabled PyTorch build in the backend environment."
+            )
+
+        if not torch.cuda.is_available():
+            raise InferenceDependencyError(
+                "INFERENCE_DEVICE requests CUDA, but PyTorch cannot access an NVIDIA GPU in the current environment."
+            )
+
+        device_index = device.index if device.index is not None else torch.cuda.current_device()
+        if device_index >= torch.cuda.device_count():
+            raise InferenceDependencyError(
+                f"INFERENCE_DEVICE requests {device}, but only {torch.cuda.device_count()} CUDA device(s) are visible."
+            )
+
+        return device, f"forced to {device} by INFERENCE_DEVICE"
+
+    @staticmethod
+    def _resolve_device_name(torch: Any, device: Any) -> str | None:
+        if device.type != "cuda":
+            return None
+
+        device_index = device.index if device.index is not None else torch.cuda.current_device()
+        return str(torch.cuda.get_device_name(device_index))
 
     def _predict_patches(self, image: Any, patch_size: int, model: Any, np: Any) -> tuple[list[Any], int]:
         torch = self._torch

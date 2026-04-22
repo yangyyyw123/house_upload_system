@@ -1,6 +1,8 @@
 let currentHouseId = null;
 let currentHouseNumber = "";
 let currentTaskCode = "";
+let activeHistoryHouseId = null;
+let historyHouseDirectory = [];
 let taskPollTimer = null;
 const previewUrls = new Map();
 
@@ -10,35 +12,91 @@ const BUNDLE_FIELDS = [
     { id: "close_view", label: "近景" },
 ];
 const MAX_BATCH_UPLOAD_BYTES = 100 * 1024 * 1024;
+const TASK_PHASE_LABELS = {
+    queued: "排队中 / Queued",
+    running: "执行中 / Running",
+    completed: "已完成 / Completed",
+    failed: "失败 / Failed",
+};
+const CAPTURE_SCALE_LABELS = {
+    long_view: "长景",
+    medium_view: "中景",
+    close_view: "近景",
+};
 const TARGET_SPEC_FALLBACKS = [
     {
-        key: "a4_qr80",
-        label: "A4 / 80mm 主靶标",
-        description: "推荐。优先保证中景照片可识别，适合常规巡检与裂缝精细测量。",
+        key: "square_120",
+        label: "120 × 120 mm 大靶标",
+        description: "适合检测区域较大、裂缝较长或需要更远识别距离的场景。",
+        target_size_mm: [120, 120],
+        qr_size_mm: 96,
+        crack_size_category: "large",
+        crack_size_label: "较大裂缝 / 大范围检测区",
+    },
+    {
+        key: "square_80",
+        label: "80 × 80 mm 标准靶标",
+        description: "默认推荐，适合常规检测区域和大多数墙体裂缝测量。",
+        target_size_mm: [80, 80],
+        qr_size_mm: 60,
+        crack_size_category: "standard",
+        crack_size_label: "常规裂缝 / 默认推荐",
         recommended: true,
     },
     {
-        key: "a4_qr60",
-        label: "A4 / 60mm 紧凑靶标",
-        description: "打印空间较小时使用。",
-        recommended: false,
+        key: "square_40",
+        label: "40 × 40 mm 小靶标",
+        description: "适合局部细裂缝和近距离拍摄，打印时建议保持原始比例。",
+        target_size_mm: [40, 40],
+        qr_size_mm: 28,
+        crack_size_category: "fine",
+        crack_size_label: "细裂缝 / 局部检测区",
     },
     {
-        key: "a5_qr60",
-        label: "A5 / 60mm 便携靶标",
-        description: "便于现场随身携带，建议近距离拍摄。",
-        recommended: false,
+        key: "square_20",
+        label: "20 × 20 mm 微型靶标",
+        description: "适合微细裂缝或张贴空间非常受限的部位，建议近距离正拍。",
+        target_size_mm: [20, 20],
+        qr_size_mm: 14,
+        crack_size_category: "micro",
+        crack_size_label: "微细裂缝 / 狭小张贴区",
     },
 ];
+let availableTargetSpecs = TARGET_SPEC_FALLBACKS.slice();
 let mediumTargetPrecheck = {
     status: "idle",
     passed: false,
     message: "等待选择中景图像后进行二维码与四角锚点预检。",
 };
 
+const VALIDATION_INPUT_SELECTOR = "input, select, textarea";
+const VALIDATION_CARD_SELECTOR = ".field-card, .upload-config-card, .upload-slot, .field-addon";
+const FORM_SUMMARY_CONFIG = {
+    infoForm: {
+        summaryId: "infoFormSummary",
+        completeText: (total) => `已完成 ${total}/${total} 项必填内容，可以直接提交房屋档案。`,
+        pendingText: (missing, total) => `还有 ${missing}/${total} 项必填内容待完成。`,
+    },
+    targetForm: {
+        summaryId: "targetFormSummary",
+        completeText: (total) => `已完成 ${total}/${total} 项关键参数，可以直接生成靶标。`,
+        pendingText: (missing, total) => `还有 ${missing}/${total} 项关键参数待填写。`,
+    },
+    uploadForm: {
+        summaryId: "uploadFormSummary",
+        completeText: (total) => `已完成 ${total}/${total} 个必传项，可以启动分析。`,
+        pendingText: (missing, total) => `还差 ${missing}/${total} 个必传项未补齐。`,
+    },
+};
+
 function setStatus(elementId, kind, text) {
     const element = document.getElementById(elementId);
-    element.className = `status status-${kind}`;
+    if (!element.dataset.baseClass) {
+        element.dataset.baseClass = Array.from(element.classList)
+            .filter((className) => !className.startsWith("status"))
+            .join(" ");
+    }
+    element.className = `${element.dataset.baseClass ? `${element.dataset.baseClass} ` : ""}status status-${kind}`;
     element.textContent = text;
 }
 
@@ -65,15 +123,169 @@ function escapeHtml(value) {
         .replaceAll("'", "&#39;");
 }
 
-function toggleOtherInput(fieldId) {
+function isElementVisible(element) {
+    if (!element) {
+        return false;
+    }
+
+    if (element.closest(".hidden, .hidden-field")) {
+        return false;
+    }
+
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+}
+
+function isValidationCandidate(element) {
+    return Boolean(element) && !element.disabled && isElementVisible(element);
+}
+
+function isRequiredField(element) {
+    return Boolean(element?.required) && isValidationCandidate(element);
+}
+
+function isFieldFilled(element) {
+    if (!isRequiredField(element)) {
+        return true;
+    }
+
+    if (element.type === "file") {
+        return Boolean(element.files?.length);
+    }
+
+    return element.value.trim() !== "";
+}
+
+function getFieldCard(element) {
+    return element.closest(VALIDATION_CARD_SELECTOR);
+}
+
+function updateFieldCardState(card) {
+    if (!card) {
+        return;
+    }
+
+    const requiredFields = Array.from(card.querySelectorAll(VALIDATION_INPUT_SELECTOR)).filter(isRequiredField);
+    const hasRequiredField = requiredFields.length > 0;
+    const hasMissingField = hasRequiredField && requiredFields.some((field) => !isFieldFilled(field));
+
+    card.classList.toggle("card-required", hasRequiredField);
+    card.classList.toggle("card-missing", hasMissingField);
+    card.classList.toggle("card-complete", hasRequiredField && !hasMissingField);
+}
+
+function updateFieldValidationState(element) {
+    if (!element) {
+        return;
+    }
+
+    const active = isRequiredField(element);
+    const missing = active && !isFieldFilled(element);
+
+    element.classList.toggle("input-required", active);
+    element.classList.toggle("input-missing", missing);
+    element.classList.toggle("input-complete", active && !missing);
+
+    if (active) {
+        element.setAttribute("aria-invalid", missing ? "true" : "false");
+    } else {
+        element.removeAttribute("aria-invalid");
+    }
+
+    updateFieldCardState(getFieldCard(element));
+}
+
+function updateFormSummary(formId) {
+    const form = document.getElementById(formId);
+    const config = FORM_SUMMARY_CONFIG[formId];
+    const summary = config ? document.getElementById(config.summaryId) : null;
+    if (!form || !config || !summary) {
+        return;
+    }
+
+    const requiredFields = Array.from(form.querySelectorAll(VALIDATION_INPUT_SELECTOR)).filter(isRequiredField);
+    const total = requiredFields.length;
+    const missing = requiredFields.filter((field) => !isFieldFilled(field)).length;
+
+    summary.textContent = missing === 0 ? config.completeText(total) : config.pendingText(missing, total);
+    summary.classList.toggle("workspace-summary-count-pending", missing > 0);
+    summary.classList.toggle("workspace-summary-count-complete", total > 0 && missing === 0);
+}
+
+function updateFormValidationState(formId) {
+    const form = document.getElementById(formId);
+    if (!form) {
+        return;
+    }
+
+    Array.from(form.querySelectorAll(VALIDATION_INPUT_SELECTOR)).forEach(updateFieldValidationState);
+    Array.from(form.querySelectorAll(VALIDATION_CARD_SELECTOR)).forEach(updateFieldCardState);
+    updateFormSummary(formId);
+}
+
+function focusFirstMissingField(formId) {
+    const form = document.getElementById(formId);
+    if (!form) {
+        return null;
+    }
+
+    const firstMissingField = Array.from(form.querySelectorAll(VALIDATION_INPUT_SELECTOR))
+        .filter(isRequiredField)
+        .find((field) => !isFieldFilled(field));
+
+    if (!firstMissingField) {
+        return null;
+    }
+
+    updateFieldValidationState(firstMissingField);
+    firstMissingField.focus({ preventScroll: true });
+    firstMissingField.scrollIntoView({ behavior: "smooth", block: "center" });
+    return firstMissingField;
+}
+
+function initializeFormValidation(formId) {
+    const form = document.getElementById(formId);
+    if (!form) {
+        return;
+    }
+
+    Array.from(form.querySelectorAll(VALIDATION_INPUT_SELECTOR)).forEach((field) => {
+        field.addEventListener("input", () => updateFormValidationState(formId));
+        field.addEventListener("change", () => updateFormValidationState(formId));
+        field.addEventListener("blur", () => updateFieldValidationState(field));
+    });
+
+    updateFormValidationState(formId);
+}
+
+function initializeWorkspaceValidation() {
+    Object.keys(FORM_SUMMARY_CONFIG).forEach(initializeFormValidation);
+}
+
+function toggleOtherInput(fieldId, { focus = true } = {}) {
     const select = document.getElementById(fieldId);
     const otherInput = document.getElementById(`${fieldId}_other`);
+    const otherWrap = document.getElementById(`${fieldId}_other_wrap`);
     const useOther = select.value === "其他";
-    otherInput.classList.toggle("hidden-field", !useOther);
+
+    if (otherWrap) {
+        otherWrap.classList.toggle("hidden-field", !useOther);
+    } else {
+        otherInput.classList.toggle("hidden-field", !useOther);
+    }
+
     otherInput.disabled = !useOther;
     otherInput.required = useOther;
+
     if (!useOther) {
         otherInput.value = "";
+    } else if (focus) {
+        window.requestAnimationFrame(() => otherInput.focus());
+    }
+
+    const form = select.closest("form");
+    if (form?.id) {
+        updateFormValidationState(form.id);
     }
 }
 
@@ -110,6 +322,45 @@ function resetBundleQualityPanel() {
     setVisible("overrideUploadButton", false);
 }
 
+function formatTaskPhase(status) {
+    return TASK_PHASE_LABELS[status] || status || "-";
+}
+
+function localizeTaskMessage(message) {
+    if (!message) {
+        return "";
+    }
+
+    const knownMessages = {
+        "Task queued for analysis.": "任务已排队，等待分析 / Task queued for analysis.",
+        "Analysis is running.": "任务分析中 / Analysis is running.",
+        "Analysis completed.": "分析完成 / Analysis completed.",
+        "Analysis completed with errors.": "分析完成，但存在错误 / Analysis completed with errors.",
+        "Analysis failed.": "分析失败 / Analysis failed.",
+        "Task interrupted before completion.": "任务在完成前中断 / Task interrupted before completion.",
+        "Detection task not found": "未找到检测任务 / Detection task not found",
+        "No task status available.": "暂无任务状态 / No task status available.",
+        "Task queued.": "任务已创建，等待执行 / Task queued.",
+        "Task is in progress.": "任务执行中 / Task is in progress.",
+        "Task finished successfully.": "任务已完成 / Task finished successfully.",
+        "Task finished with partial errors.": "任务已完成，但存在部分错误 / Task finished with partial errors.",
+        "Task failed.": "任务失败 / Task failed.",
+    };
+
+    if (knownMessages[message]) {
+        return knownMessages[message];
+    }
+
+    const processingMatch = message.match(/^Processing ([a-z_]+) \((\d+)\/(\d+)\)\.$/);
+    if (processingMatch) {
+        const [, captureScale, index, total] = processingMatch;
+        const captureScaleLabel = CAPTURE_SCALE_LABELS[captureScale] || captureScale;
+        return `正在处理 ${captureScaleLabel}（${index}/${total}） / Processing ${captureScale} (${index}/${total}).`;
+    }
+
+    return message;
+}
+
 function stopTaskPolling() {
     if (taskPollTimer !== null) {
         window.clearInterval(taskPollTimer);
@@ -124,7 +375,7 @@ function getTaskStatusClass(task) {
     if (task?.status === "failed") {
         return "task-status-error";
     }
-    if (task?.status === "running") {
+    if (task?.status === "queued" || task?.status === "running") {
         return "task-status-running";
     }
     return "task-status-idle";
@@ -133,12 +384,13 @@ function getTaskStatusClass(task) {
 function renderDetectionTaskStatus(task) {
     const panel = document.getElementById("taskStatusPanel");
     panel.className = `task-status-panel ${getTaskStatusClass(task)}`;
-    document.getElementById("taskStatusSummary").textContent = task?.message || "No task status available.";
+    document.getElementById("taskStatusSummary").textContent =
+        localizeTaskMessage(task?.message) || "暂无任务状态 / No task status available.";
     document.getElementById("taskStatusCode").textContent = task?.task_code || "-";
     document.getElementById("taskStatusBundle").textContent = task?.bundle_code || "-";
     document.getElementById("taskStatusProgress").textContent =
         task?.total_items ? `${task.processed_items || 0}/${task.total_items} (${task.progress_percent || 0}%)` : "-";
-    document.getElementById("taskStatusPhase").textContent = task?.status || "-";
+    document.getElementById("taskStatusPhase").textContent = formatTaskPhase(task?.status);
     document.getElementById("taskStatusTime").textContent = task?.completed_at || task?.started_at || task?.created_at || "-";
     document.getElementById("taskStatusError").textContent = task?.error_detail || "";
     setVisible("taskStatusPanel", true);
@@ -147,7 +399,7 @@ function renderDetectionTaskStatus(task) {
 async function fetchDetectionTask(taskCode, { silent = false } = {}) {
     if (!taskCode) {
         if (!silent) {
-            setGlobalStatus("error", "Task code is required.");
+            setGlobalStatus("error", "请输入任务编号 / Task code is required.");
         }
         return null;
     }
@@ -157,7 +409,7 @@ async function fetchDetectionTask(taskCode, { silent = false } = {}) {
         const result = await parseResponsePayload(response);
         if (!response.ok) {
             if (!silent) {
-                setGlobalStatus("error", result.message || "Failed to load task status.");
+                setGlobalStatus("error", localizeTaskMessage(result.message) || "加载任务状态失败 / Failed to load task status.");
             }
             return null;
         }
@@ -178,33 +430,39 @@ async function fetchDetectionTask(taskCode, { silent = false } = {}) {
             if (currentHouseId) {
                 await loadHouseDetections(currentHouseId);
             }
+            await loadSurveySummary();
             setStatus(
                 "uploadStatus",
                 result.has_errors ? "warning" : "success",
-                result.has_errors ? "Task finished with partial errors." : "Task finished successfully."
+                result.has_errors
+                    ? "任务已完成，但存在部分错误 / Task finished with partial errors."
+                    : "任务已完成 / Task finished successfully."
             );
             setGlobalStatus(
                 result.has_errors ? "warning" : "success",
                 result.has_errors
-                    ? `Task ${currentTaskCode} finished with partial errors.`
-                    : `Task ${currentTaskCode} finished successfully.`
+                    ? `任务 ${currentTaskCode} 已完成，但存在部分错误 / Task ${currentTaskCode} finished with partial errors.`
+                    : `任务 ${currentTaskCode} 已完成 / Task ${currentTaskCode} finished successfully.`
             );
         } else if (result.status === "failed") {
             stopTaskPolling();
             if (Array.isArray(result.results) && result.results.length) {
                 renderBatchUploadResult(result);
             }
-            setStatus("uploadStatus", "error", result.message || "Task failed.");
-            setGlobalStatus("error", result.message || `Task ${currentTaskCode} failed.`);
+            setStatus("uploadStatus", "error", localizeTaskMessage(result.message) || "任务失败 / Task failed.");
+            setGlobalStatus(
+                "error",
+                localizeTaskMessage(result.message) || `任务 ${currentTaskCode} 失败 / Task ${currentTaskCode} failed.`
+            );
         } else if (!silent) {
-            setStatus("uploadStatus", "loading", result.message || "Task is in progress.");
-            setGlobalStatus("loading", `Task ${currentTaskCode} is ${result.status || "running"}.`);
+            setStatus("uploadStatus", "loading", localizeTaskMessage(result.message) || "任务执行中 / Task is in progress.");
+            setGlobalStatus("loading", `任务 ${currentTaskCode} 当前状态：${formatTaskPhase(result.status)}`);
         }
 
         return result;
     } catch (error) {
         if (!silent) {
-            setGlobalStatus("error", `Failed to load task status: ${error}`);
+            setGlobalStatus("error", `加载任务状态失败 / Failed to load task status: ${error}`);
         }
         return null;
     }
@@ -222,7 +480,7 @@ function startTaskPolling(taskCode) {
 async function queryDetectionTask() {
     const taskCode = document.getElementById("taskLookupCode").value.trim();
     if (!taskCode) {
-        setGlobalStatus("error", "Enter a task code first.");
+        setGlobalStatus("error", "请先输入任务编号 / Enter a task code first.");
         return;
     }
 
@@ -300,6 +558,84 @@ function syncTargetHouseNumber(force = false) {
     if (force || !targetInput.value.trim()) {
         targetInput.value = sourceValue;
     }
+
+    updateFormValidationState("targetForm");
+}
+
+function getAvailableTargetSpecs() {
+    return Array.isArray(availableTargetSpecs) && availableTargetSpecs.length ? availableTargetSpecs : TARGET_SPEC_FALLBACKS;
+}
+
+function findTargetSpecByKey(specKey) {
+    return getAvailableTargetSpecs().find((spec) => spec.key === specKey) || null;
+}
+
+function formatTargetSize(spec = {}) {
+    if (Array.isArray(spec.target_size_mm) && spec.target_size_mm.length === 2) {
+        return `${spec.target_size_mm[0]} × ${spec.target_size_mm[1]} mm`;
+    }
+    if (spec.frame_size_mm) {
+        return `${spec.frame_size_mm} × ${spec.frame_size_mm} mm`;
+    }
+    return "-";
+}
+
+function getRecommendedTargetSpec(specs, crackSizeCategory) {
+    if (crackSizeCategory) {
+        const matched = specs.filter((spec) => spec.crack_size_category === crackSizeCategory);
+        if (matched.length) {
+            return matched.find((spec) => spec.recommended) || matched[0];
+        }
+    }
+    return specs.find((spec) => spec.recommended) || specs[0] || null;
+}
+
+function updateTargetSpecGuidance() {
+    const crackSizeSelect = document.getElementById("target_crack_size");
+    const specSelect = document.getElementById("target_spec");
+    const crackHint = document.getElementById("target_crack_size_hint");
+    const specHint = document.getElementById("target_spec_hint");
+    if (!specSelect) {
+        return;
+    }
+
+    const specs = getAvailableTargetSpecs();
+    const selectedSpec = findTargetSpecByKey(specSelect.value) || specs[0] || null;
+    const crackSizeValue = crackSizeSelect ? crackSizeSelect.value : "";
+    const recommendedSpec = getRecommendedTargetSpec(specs, crackSizeValue);
+
+    if (crackHint && crackSizeSelect) {
+        const crackScaleText = crackSizeSelect.selectedOptions[0]?.textContent?.trim() || "常规裂缝 / 默认推荐";
+        crackHint.textContent = recommendedSpec
+            ? `${crackScaleText}。当前建议优先选择 ${recommendedSpec.label}。`
+            : `${crackScaleText}。`;
+    }
+
+    if (specHint) {
+        specHint.textContent = selectedSpec
+            ? `${selectedSpec.description} 当前靶标尺寸 ${formatTargetSize(selectedSpec)}，二维码边长 ${selectedSpec.qr_size_mm ?? "-"} mm。`
+            : "根据检测区域裂缝大小选择靶标尺寸。";
+    }
+}
+
+function syncTargetSpecByCrackSize(force = false) {
+    const select = document.getElementById("target_spec");
+    if (!select) {
+        return;
+    }
+
+    const specs = getAvailableTargetSpecs();
+    const crackSizeValue = document.getElementById("target_crack_size")?.value || "";
+    const currentSpec = findTargetSpecByKey(select.value);
+    const recommendedSpec = getRecommendedTargetSpec(specs, crackSizeValue);
+    const shouldReplace = force || !currentSpec;
+
+    if (recommendedSpec && shouldReplace) {
+        select.value = recommendedSpec.key;
+    }
+
+    updateTargetSpecGuidance();
+    updateFormValidationState("targetForm");
 }
 
 function renderTargetSpecOptions(specs) {
@@ -308,12 +644,22 @@ function renderTargetSpecOptions(specs) {
         return;
     }
 
-    select.innerHTML = specs
+    const normalizedSpecs = Array.isArray(specs) && specs.length ? specs : TARGET_SPEC_FALLBACKS;
+    const previousValue = select.value;
+    availableTargetSpecs = normalizedSpecs.slice();
+    select.innerHTML = normalizedSpecs
         .map((spec) => {
             const badge = spec.recommended ? "（推荐）" : "";
             return `<option value="${escapeHtml(spec.key)}">${escapeHtml(spec.label)}${badge}</option>`;
         })
         .join("");
+
+    if (previousValue && normalizedSpecs.some((spec) => spec.key === previousValue)) {
+        select.value = previousValue;
+    }
+
+    syncTargetSpecByCrackSize(!previousValue);
+    updateFormValidationState("targetForm");
 }
 
 async function loadTargetSpecs() {
@@ -337,8 +683,9 @@ function renderTargetResult(payload) {
     const metaCards = [
         { label: "靶标编号", value: payload.target_id || "-" },
         { label: "靶标规格", value: spec.label || "-" },
+        { label: "靶标尺寸", value: formatTargetSize(spec) },
         { label: "二维码边长", value: spec.qr_size_mm ? `${spec.qr_size_mm} mm` : "-" },
-        { label: "外框尺寸", value: spec.frame_size_mm ? `${spec.frame_size_mm} mm` : "-" },
+        { label: "适用裂缝", value: spec.crack_size_label || "-" },
     ];
 
     container.innerHTML = `
@@ -370,12 +717,14 @@ function renderTargetResult(payload) {
 }
 
 async function generateTarget() {
+    updateFormValidationState("targetForm");
     const houseNumber = document.getElementById("target_house_number").value.trim();
     const inspectionRegion = document.getElementById("target_region").value.trim();
     const sceneType = document.getElementById("target_scene_type").value;
     const specKey = document.getElementById("target_spec").value;
 
     if (!houseNumber || !inspectionRegion || !sceneType || !specKey) {
+        focusFirstMissingField("targetForm");
         setStatus("targetStatus", "error", "请完整填写房屋编号、检测区域、场景类型和靶标规格。");
         setGlobalStatus("error", "二维码靶标生成参数不完整。");
         return;
@@ -628,6 +977,399 @@ function formatRiskThresholds(thresholds = []) {
         .join(" / ");
 }
 
+function formatCaptureScale(value) {
+    if (!value) {
+        return "-";
+    }
+    return CAPTURE_SCALE_LABELS[value] || value;
+}
+
+function getRiskToneClass(level) {
+    const text = String(level || "");
+    if (text.includes("高")) {
+        return "tone-danger";
+    }
+    if (text.includes("中")) {
+        return "tone-warning";
+    }
+    if (text.includes("低") || text.includes("无")) {
+        return "tone-safe";
+    }
+    return "tone-neutral";
+}
+
+function getStageToneClass(status) {
+    const text = String(status || "").toLowerCase();
+    if (text.includes("complete") || text.includes("完成")) {
+        return "tone-safe";
+    }
+    if (text.includes("fail") || text.includes("错误") || text.includes("失败")) {
+        return "tone-danger";
+    }
+    if (text.includes("run") || text.includes("queue") || text.includes("进行") || text.includes("等待")) {
+        return "tone-warning";
+    }
+    return "tone-neutral";
+}
+
+function buildMetaChipGroup(items = []) {
+    const chips = items
+        .filter((item) => item && item.label && item.value !== null && item.value !== undefined && item.value !== "")
+        .map(
+            (item) => `
+                <span class="meta-chip ${escapeHtml(item.toneClass || "")}">
+                    <em>${escapeHtml(item.label)}</em>
+                    <strong>${escapeHtml(item.value)}</strong>
+                </span>
+            `
+        )
+        .join("");
+
+    return chips ? `<div class="meta-chip-group">${chips}</div>` : "";
+}
+
+function renderDashboardOverview(elementId, cards = []) {
+    const container = document.getElementById(elementId);
+    if (!container) {
+        return;
+    }
+
+    const validCards = cards.filter((card) => card && (card.title || card.value || card.detail));
+    if (!validCards.length) {
+        container.innerHTML = "";
+        setVisible(elementId, false);
+        return;
+    }
+
+    container.innerHTML = validCards
+        .map(
+            (card) => `
+                <article class="dashboard-card ${escapeHtml(card.toneClass || "")}">
+                    <span>${escapeHtml(card.title || "-")}</span>
+                    <strong>${escapeHtml(card.value || "-")}</strong>
+                    ${card.detail ? `<p>${escapeHtml(card.detail)}</p>` : ""}
+                </article>
+            `
+        )
+        .join("");
+    container.className = "dashboard-overview";
+    setVisible(elementId, true);
+}
+
+function renderBatchResultOverview(payload) {
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    if (!results.length) {
+        renderDashboardOverview("batchResultOverview", []);
+        return;
+    }
+
+    const mediumHighRiskCount = results.filter((item) => {
+        const level = item.risk_assessment?.risk_level || item.risk_level || "";
+        return level === "中风险" || level === "高风险";
+    }).length;
+    const quantifiedCount = results.filter((item) => {
+        const quant = item.quantification || {};
+        return quant.max_width_mm !== null && quant.max_width_mm !== undefined;
+    }).length;
+    const reportReady = payload.bundle_report_url ? "已生成" : "处理中";
+
+    renderDashboardOverview("batchResultOverview", [
+        {
+            title: "批次编号",
+            value: payload.bundle_code || "-",
+            detail: payload.task_code ? `任务 ${payload.task_code}` : "当前未返回任务编号",
+            toneClass: "tone-neutral",
+        },
+        {
+            title: "图像数量",
+            value: `${results.length} 张`,
+            detail: "长景 / 中景 / 近景批量结果",
+            toneClass: "tone-safe",
+        },
+        {
+            title: "中高风险",
+            value: `${mediumHighRiskCount} 项`,
+            detail: "建议优先查看风险说明与报告",
+            toneClass: mediumHighRiskCount ? "tone-warning" : "tone-safe",
+        },
+        {
+            title: "mm 量化",
+            value: `${quantifiedCount} / ${results.length}`,
+            detail: "已建立物理尺度的结果数量",
+            toneClass: quantifiedCount ? "tone-safe" : "tone-neutral",
+        },
+        {
+            title: "总报告",
+            value: reportReady,
+            detail: reportReady === "已生成" ? "可直接下载三景总报告" : "等待批次处理完成",
+            toneClass: reportReady === "已生成" ? "tone-safe" : "tone-warning",
+        },
+    ]);
+}
+
+function renderHistoryOverview(records) {
+    if (!records.length) {
+        renderDashboardOverview("historyOverview", []);
+        return;
+    }
+
+    const latestRecord = records[0];
+    const quantifiedCount = records.filter((record) => {
+        const quant = record.quantification || {};
+        return quant.max_width_mm !== null && quant.max_width_mm !== undefined;
+    }).length;
+    const mediumHighRiskCount = records.filter((record) => {
+        const level = record.risk_assessment?.risk_level || record.risk_level || "";
+        return level === "中风险" || level === "高风险";
+    }).length;
+    const latestRiskLevel = latestRecord.risk_assessment?.risk_level || latestRecord.risk_level || "-";
+
+    renderDashboardOverview("historyOverview", [
+        {
+            title: "历史记录",
+            value: `${records.length} 次`,
+            detail: "当前房屋已完成检测次数",
+            toneClass: "tone-neutral",
+        },
+        {
+            title: "最新风险",
+            value: latestRiskLevel,
+            detail: latestRecord.created_at || "未知时间",
+            toneClass: getRiskToneClass(latestRiskLevel),
+        },
+        {
+            title: "中高风险记录",
+            value: `${mediumHighRiskCount} 次`,
+            detail: "建议结合趋势分析持续复核",
+            toneClass: mediumHighRiskCount ? "tone-warning" : "tone-safe",
+        },
+        {
+            title: "mm 量化记录",
+            value: `${quantifiedCount} 次`,
+            detail: "已完成物理尺度换算的历史记录",
+            toneClass: quantifiedCount ? "tone-safe" : "tone-neutral",
+        },
+    ]);
+}
+
+/*
+function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
+    const board = document.getElementById("historyHouseBoard");
+    const list = document.getElementById("historyHouseList");
+    const hasItems = Array.isArray(houses) && houses.length > 0;
+    historyHouseDirectory = hasItems ? houses.slice() : [];
+
+    const boardTitle = board?.querySelector(".section-subhead strong");
+    const boardDescription = board?.querySelector(".section-subhead p");
+    if (boardTitle) {
+        boardTitle.textContent = "\u5386\u53f2\u68c0\u6d4b\u623f\u5c4b";
+    }
+    if (boardDescription) {
+        boardDescription.textContent = "\u4ee5\u4e0b\u623f\u5c4b\u5df2\u6709\u68c0\u6d4b\u8bb0\u5f55\u3002\u70b9\u51fb\u623f\u53f7\u53ef\u76f4\u63a5\u6253\u5f00\u6700\u65b0\u68c0\u6d4b\u62a5\u544a\uff0c\u70b9\u51fb\u201c\u67e5\u770b\u5386\u53f2\u201d\u53ef\u5c55\u5f00\u8be5\u623f\u5c4b\u7684\u5386\u6b21\u68c0\u6d4b\u8bb0\u5f55\u3002";
+    }
+
+    if (!list) {
+        return;
+    }
+
+    if (!hasItems) {
+        list.innerHTML = "";
+        setVisible("historyHouseBoard", false);
+        if (!activeHistoryHouseId) {
+            setVisible("historyPanel", false);
+        }
+        return;
+    }
+
+    list.innerHTML = historyHouseDirectory
+        .map((item) => {
+            const isActive = Number(item.house_id) === Number(activeHistoryHouseId);
+            const reportUrl = item.latest_report_view_url || item.latest_report_url || "#";
+            const bundleLink = item.latest_bundle_report_url
+                ? `<a class="button-link compact-link" href="${escapeHtml(item.latest_bundle_report_url)}?download=0" target="_blank" rel="noopener noreferrer">鎵撳紑鎬绘姤鍛?/a>`
+                : "";
+            return `
+                <article class="history-item history-house-card${isActive ? " history-house-card-active" : ""}">
+                    <div class="history-header">
+                        <div>
+                            <a class="history-house-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">
+                                ${escapeHtml(item.house_number || "-")}
+                            </a>
+                            <p>${escapeHtml(item.latest_detection_code || "鏆傛棤妫€娴嬬紪鍙?)}</p>
+                        </div>
+                        <div class="history-head-meta">
+                            <span class="meta-chip ${getRiskToneClass(item.latest_risk_level || "-")}">
+                                <em>鏈€鏂伴闄?/em>
+                                <strong>${escapeHtml(item.latest_risk_level || "-")}</strong>
+                            </span>
+                            <span class="history-time">${escapeHtml(item.latest_created_at || "鏈煡鏃堕棿")}</span>
+                        </div>
+                    </div>
+                    ${buildMetaChipGroup([
+                        { label: "鍘嗗彶璁板綍", value: `${item.history_count || 0} 娆?` },
+                        { label: "鏋勪欢", value: item.latest_component_type || "-" },
+                        { label: "鍦烘櫙", value: item.latest_scenario_type || "-" },
+                    ])}
+                    <div class="history-actions">
+                        <button type="button" class="secondary-button" onclick="openHouseHistory(${Number(item.house_id)})">鏌ョ湅鍘嗗彶</button>
+                        <a class="button-link compact-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">鎵撳紑鏈€鏂版姤鍛?/a>
+                        ${bundleLink}
+                    </div>
+                </article>
+            `;
+        })
+        .join("");
+
+    setVisible("historyHouseBoard", true);
+    setVisible("historyPanel", true);
+}
+
+function openHouseHistory(houseId) {
+    activeHistoryHouseId = houseId;
+    renderHistoryHouseDirectory();
+    loadHouseDetections(houseId);
+}
+
+*/
+
+function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
+    const board = document.getElementById("historyHouseBoard");
+    const list = document.getElementById("historyHouseList");
+    const hasItems = Array.isArray(houses) && houses.length > 0;
+    historyHouseDirectory = hasItems ? houses.slice() : [];
+    const boardTitle = board?.querySelector(".section-subhead strong");
+    const boardDescription = board?.querySelector(".section-subhead p");
+
+    if (boardTitle) {
+        boardTitle.textContent = "\u5386\u53f2\u68c0\u6d4b\u623f\u5c4b";
+    }
+    if (boardDescription) {
+        boardDescription.textContent = "\u4ee5\u4e0b\u623f\u5c4b\u5df2\u6709\u68c0\u6d4b\u8bb0\u5f55\u3002\u70b9\u51fb\u623f\u53f7\u53ef\u76f4\u63a5\u6253\u5f00\u6700\u65b0\u68c0\u6d4b\u62a5\u544a\uff0c\u70b9\u51fb\u201c\u67e5\u770b\u5386\u53f2\u201d\u53ef\u5c55\u5f00\u8be5\u623f\u5c4b\u7684\u5386\u6b21\u68c0\u6d4b\u8bb0\u5f55\u3002";
+    }
+
+    if (!list) {
+        return;
+    }
+
+    if (!hasItems) {
+        list.innerHTML = "";
+        setVisible("historyHouseBoard", false);
+        if (!activeHistoryHouseId) {
+            setVisible("historyPanel", false);
+        }
+        return;
+    }
+
+    list.innerHTML = historyHouseDirectory
+        .map((item) => {
+            const isActive = Number(item.house_id) === Number(activeHistoryHouseId);
+            const reportUrl = item.latest_report_view_url || item.latest_report_url || "#";
+            const bundleLink = item.latest_bundle_report_url
+                ? `<a class="button-link compact-link" href="${escapeHtml(item.latest_bundle_report_url)}?download=0" target="_blank" rel="noopener noreferrer">\u6253\u5f00\u603b\u62a5\u544a</a>`
+                : "";
+
+            return `
+                <article class="history-item history-house-card${isActive ? " history-house-card-active" : ""}">
+                    <div class="history-header">
+                        <div>
+                            <a class="history-house-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">
+                                <span>${escapeHtml(item.house_number || "-")}</span>
+                                <small>\u70b9\u51fb\u76f4\u63a5\u6253\u5f00\u6700\u65b0\u62a5\u544a</small>
+                            </a>
+                            <p>${escapeHtml(item.latest_detection_code || "\u6682\u65e0\u68c0\u6d4b\u7f16\u53f7")}</p>
+                        </div>
+                        <div class="history-head-meta">
+                            <span class="meta-chip ${getRiskToneClass(item.latest_risk_level || "-")}">
+                                <em>\u6700\u65b0\u98ce\u9669</em>
+                                <strong>${escapeHtml(item.latest_risk_level || "-")}</strong>
+                            </span>
+                            <span class="history-time">${escapeHtml(item.latest_created_at || "\u672a\u77e5\u65f6\u95f4")}</span>
+                        </div>
+                    </div>
+                    ${buildMetaChipGroup([
+                        { label: "\u5386\u53f2\u6b21\u6570", value: `${item.history_count || 0}` },
+                        { label: "\u6784\u4ef6", value: item.latest_component_type || "-" },
+                        { label: "\u573a\u666f", value: item.latest_scenario_type || "-" },
+                    ])}
+                    <div class="history-actions">
+                        <button type="button" class="secondary-button" onclick="openHouseHistory(${Number(item.house_id)})">\u67e5\u770b\u5386\u53f2</button>
+                        <a class="button-link compact-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">\u6253\u5f00\u6700\u65b0\u62a5\u544a</a>
+                        ${bundleLink}
+                    </div>
+                </article>
+            `;
+        })
+        .join("");
+
+    setVisible("historyHouseBoard", true);
+    setVisible("historyPanel", true);
+}
+
+function openHouseHistory(houseId) {
+    activeHistoryHouseId = houseId;
+    renderHistoryHouseDirectory();
+    loadHouseDetections(houseId);
+}
+
+function renderSurveyInsights(summary) {
+    const container = document.getElementById("surveyInsights");
+    if (!container) {
+        return;
+    }
+
+    const distribution = summary.risk_distribution || {};
+    const highRiskCount = distribution["高风险"] || 0;
+    const mediumRiskCount = distribution["中风险"] || 0;
+    const houseCount = summary.house_count || 0;
+    const headline = highRiskCount
+        ? `当前有 ${highRiskCount} 栋高风险房屋需要优先复核。`
+        : mediumRiskCount
+            ? `当前暂无高风险房屋，但有 ${mediumRiskCount} 栋中风险房屋需要关注。`
+            : "当前平台暂无中高风险房屋，可继续扩大巡检覆盖范围。";
+
+    container.innerHTML = `
+        <div>
+            <p class="upload-hero-kicker">Survey Insight</p>
+            <strong>平台巡检态势</strong>
+            <p>${escapeHtml(headline)}</p>
+        </div>
+        <div class="dashboard-hero-metrics">
+            <article>
+                <span>房屋覆盖</span>
+                <strong>${escapeHtml(houseCount)}</strong>
+            </article>
+            <article>
+                <span>高风险</span>
+                <strong>${escapeHtml(highRiskCount)}</strong>
+            </article>
+            <article>
+                <span>中风险</span>
+                <strong>${escapeHtml(mediumRiskCount)}</strong>
+            </article>
+        </div>
+    `;
+    container.className = "dashboard-hero";
+    setVisible("surveyInsights", true);
+}
+
+function buildDetailSection(title, body, { open = false, className = "" } = {}) {
+    if (!body || !body.trim()) {
+        return "";
+    }
+
+    return `
+        <details class="detail-section ${escapeHtml(className)}"${open ? " open" : ""}>
+            <summary>
+                <span>${escapeHtml(title)}</span>
+                <em>展开 / 收起</em>
+            </summary>
+            <div class="detail-section-body">
+                ${body}
+            </div>
+        </details>
+    `;
+}
+
 function buildRiskBreakdownCard(risk = {}) {
     const breakdown = Array.isArray(risk.score_breakdown) ? risk.score_breakdown : [];
     const notes = Array.isArray(risk.explanation_notes) ? risk.explanation_notes : [];
@@ -720,14 +1462,18 @@ function buildStageCards(stages = {}) {
     return `
         <div class="stage-grid">
             <article class="stage-card">
-                <span class="stage-kicker">识别阶段</span>
-                <strong>${escapeHtml(recognition.status || "-")}</strong>
+                <div class="stage-title-row">
+                    <span class="stage-kicker">识别阶段</span>
+                    <span class="stage-status-chip ${getStageToneClass(recognition.status)}">${escapeHtml(recognition.status || "-")}</span>
+                </div>
                 <p>${escapeHtml(recognition.summary || "暂无识别阶段说明。")}</p>
                 <span class="stage-meta">${escapeHtml(recognition.physical_scale || "未建立物理比例")}</span>
             </article>
             <article class="stage-card">
-                <span class="stage-kicker">量化阶段</span>
-                <strong>${escapeHtml(quantification.status || "-")}</strong>
+                <div class="stage-title-row">
+                    <span class="stage-kicker">量化阶段</span>
+                    <span class="stage-status-chip ${getStageToneClass(quantification.status)}">${escapeHtml(quantification.status || "-")}</span>
+                </div>
                 <p>${escapeHtml(quantification.summary || "暂无量化阶段说明。")}</p>
             </article>
         </div>
@@ -754,7 +1500,10 @@ function buildQuantificationTable(markerDetection = {}, quantification = {}) {
 function buildResultMediaCard(title, url, emptyText) {
     return `
         <article class="result-card">
-            <h3>${escapeHtml(title)}</h3>
+            <div class="result-card-head">
+                <span class="note-kicker">图像输出</span>
+                <h3>${escapeHtml(title)}</h3>
+            </div>
             ${url ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(title)}">` : `<div class="result-placeholder">${escapeHtml(emptyText)}</div>`}
             ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">打开图像</a>` : ""}
         </article>
@@ -772,94 +1521,125 @@ function buildResultCard(item) {
     const markerDetection = item.marker_detection || {};
     const quantification = item.quantification || {};
     const analysisStages = item.analysis_stages || {};
+    const captureScale = formatCaptureScale(item.capture_scale || "未标注");
+    const riskLevel = risk.risk_level || "未生成";
     const reportLink = item.report_url
         ? `<a class="button-link compact-link" href="${escapeHtml(item.report_url)}" target="_blank" rel="noopener noreferrer">下载报告</a>`
         : "";
+    const analysisDetail = [
+        buildRiskBreakdownCard(risk),
+        buildStageCards(analysisStages),
+        `
+            <article class="note-card quant-note-card">
+                <span class="note-kicker">量化阶段说明</span>
+                <p>${escapeHtml(quantification.message || "当前暂无量化说明。")}</p>
+            </article>
+        `,
+        buildQuantificationTable(markerDetection, quantification),
+    ].join("");
+    const mediaDetail = `
+        <div class="result-grid">
+            ${buildResultMediaCard("原图", item.file_url, "无原图")}
+            ${buildResultMediaCard("裂缝掩码", item.segmentation?.mask_url, "无掩码")}
+            ${buildResultMediaCard("识别叠加图", item.segmentation?.overlay_url, "无识别图")}
+            ${buildResultMediaCard("靶标识别图", markerDetection.annotated_image_url, "未生成靶标图")}
+            ${buildResultMediaCard("量化叠加图", quantification.quant_overlay_url, "未生成量化图")}
+            ${buildResultMediaCard("宽度统计图", quantification.width_chart_url, "未生成统计图")}
+        </div>
+        <dl class="result-meta">
+            <div>
+                <dt>裂缝像素占比</dt>
+                <dd>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</dd>
+            </div>
+            <div>
+                <dt>裂缝像素数</dt>
+                <dd>${escapeHtml(item.segmentation?.crack_pixel_count ?? "-")}</dd>
+            </div>
+            <div>
+                <dt>推理设备</dt>
+                <dd>${escapeHtml(item.segmentation?.device ?? "-")}</dd>
+            </div>
+            <div>
+                <dt>切块数量</dt>
+                <dd>${escapeHtml(item.segmentation?.patch_count ?? "-")}</dd>
+            </div>
+            <div>
+                <dt>靶标状态</dt>
+                <dd>${escapeHtml(markerDetection.status || "-")}</dd>
+            </div>
+            <div>
+                <dt>量化状态</dt>
+                <dd>${escapeHtml(quantification.status || "-")}</dd>
+            </div>
+        </dl>
+    `;
     return `
-        <article class="batch-result-card">
+        <article class="batch-result-card result-shell">
             <div class="batch-result-head">
-                <div>
-                    <strong>${escapeHtml(item.capture_scale || "未标注")}</strong>
+                <div class="result-title-block">
+                    <span class="result-capture-tag">${escapeHtml(captureScale)}</span>
+                    <strong>${escapeHtml(item.detection_code || item.original_filename || "未命名结果")}</strong>
                     <p>${escapeHtml(item.original_filename || "")}</p>
                 </div>
-                <span class="quality-badge ${getQualityBadgeClass(quality.status)}">${escapeHtml(quality.status || "未知")}</span>
+                <div class="result-badges">
+                    <span class="quality-badge ${getQualityBadgeClass(quality.status)}">${escapeHtml(quality.status || "未知")}</span>
+                    <span class="meta-chip ${getRiskToneClass(riskLevel)}">
+                        <em>风险</em>
+                        <strong>${escapeHtml(riskLevel)}</strong>
+                    </span>
+                </div>
             </div>
+            ${buildMetaChipGroup([
+                { label: "检测编号", value: item.detection_code || "-" },
+                { label: "识别方式", value: formatMarkerMode(markerDetection) },
+                { label: "量化平面", value: formatPlaneMode(quantification) },
+                { label: "样本点", value: quantification.sample_count ?? "-" },
+            ])}
             <div class="summary-grid batch-summary-grid">
                 <article class="summary-card">
-                    <span>检测编号</span>
-                    <strong>${escapeHtml(item.detection_code || "-")}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>风险等级</span>
-                    <strong>${escapeHtml(risk.risk_level || "未生成")}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>质量状态</span>
-                    <strong>${escapeHtml(quality.status || "-")} / ${escapeHtml(quality.score ?? "-")}</strong>
+                    <span>质量分</span>
+                    <strong>${escapeHtml(quality.score ?? "-")}</strong>
                 </article>
                 <article class="summary-card">
                     <span>风险评分</span>
                     <strong>${escapeHtml(formatRiskScore(risk))}</strong>
                 </article>
                 <article class="summary-card">
+                    <span>最大宽度</span>
+                    <strong>${escapeHtml(formatMetricValue(quantification.max_width_mm, quantification.max_width_px))}</strong>
+                </article>
+                <article class="summary-card">
+                    <span>裂缝长度</span>
+                    <strong>${escapeHtml(formatMetricValue(quantification.crack_length_mm, quantification.crack_length_px))}</strong>
+                </article>
+                <article class="summary-card">
                     <span>裂缝占比</span>
                     <strong>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</strong>
+                </article>
+                <article class="summary-card">
+                    <span>mm/pixel</span>
+                    <strong>${markerDetection.physical_scale_mm_per_pixel ? escapeHtml(Number(markerDetection.physical_scale_mm_per_pixel).toFixed(6)) : "-"}</strong>
                 </article>
             </div>
             <div class="result-notes">
                 <article class="note-card">
-                    <h3>质量说明</h3>
+                    <span class="note-kicker">质量说明</span>
                     <p>${escapeHtml(quality.summary || item.message || "-")}</p>
                 </article>
                 <article class="note-card">
-                    <h3>风险说明</h3>
+                    <span class="note-kicker">风险说明</span>
                     <p>${escapeHtml(risk.risk_summary || item.segmentation_error || item.message || "-")}</p>
                 </article>
+                <article class="note-card">
+                    <span class="note-kicker">处置建议</span>
+                    <p>${escapeHtml(risk.recommendation || item.recommendation || "暂无处置建议。")}</p>
+                </article>
             </div>
-            ${buildRiskBreakdownCard(risk)}
-            ${buildStageCards(analysisStages)}
-            <article class="note-card quant-note-card">
-                <h3>量化阶段说明</h3>
-                <p>${escapeHtml(quantification.message || "当前暂无量化说明。")}</p>
-            </article>
-            ${buildQuantificationTable(markerDetection, quantification)}
             <div class="report-actions">
                 ${reportLink}
             </div>
-            <div class="result-grid">
-                ${buildResultMediaCard("原图", item.file_url, "无原图")}
-                ${buildResultMediaCard("裂缝掩码", item.segmentation?.mask_url, "无掩码")}
-                ${buildResultMediaCard("识别叠加图", item.segmentation?.overlay_url, "无识别图")}
-                ${buildResultMediaCard("靶标识别图", markerDetection.annotated_image_url, "未生成靶标图")}
-                ${buildResultMediaCard("量化叠加图", quantification.quant_overlay_url, "未生成量化图")}
-                ${buildResultMediaCard("宽度统计图", quantification.width_chart_url, "未生成统计图")}
-            </div>
-            <dl class="result-meta">
-                <div>
-                    <dt>裂缝像素占比</dt>
-                    <dd>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</dd>
-                </div>
-                <div>
-                    <dt>裂缝像素数</dt>
-                    <dd>${escapeHtml(item.segmentation?.crack_pixel_count ?? "-")}</dd>
-                </div>
-                <div>
-                    <dt>推理设备</dt>
-                    <dd>${escapeHtml(item.segmentation?.device ?? "-")}</dd>
-                </div>
-                <div>
-                    <dt>切块数量</dt>
-                    <dd>${escapeHtml(item.segmentation?.patch_count ?? "-")}</dd>
-                </div>
-                <div>
-                    <dt>靶标状态</dt>
-                    <dd>${escapeHtml(markerDetection.status || "-")}</dd>
-                </div>
-                <div>
-                    <dt>量化状态</dt>
-                    <dd>${escapeHtml(quantification.status || "-")}</dd>
-                </div>
-            </dl>
+            ${buildDetailSection("分析阶段与量化指标", analysisDetail, { open: true })}
+            ${buildDetailSection("图像输出与技术元数据", mediaDetail)}
         </article>
     `;
 }
@@ -920,6 +1700,7 @@ function renderBundleProjection(projection) {
 function renderBatchUploadResult(payload) {
     const results = payload.results || [];
     const list = document.getElementById("batchResultList");
+    renderBatchResultOverview(payload);
     list.innerHTML = results.map(buildResultCard).join("");
     renderBundleProjection(payload.bundle_projection);
     const batchBundleActions = document.getElementById("batchBundleActions");
@@ -961,6 +1742,8 @@ function renderTrendSummary(summary) {
 function renderHistory(records) {
     const historyList = document.getElementById("historyList");
     historyList.innerHTML = "";
+    setVisible("historyList", true);
+    renderHistoryOverview(records);
 
     if (!records.length) {
         historyList.innerHTML = '<p class="history-empty">当前房屋还没有检测记录。</p>';
@@ -968,7 +1751,7 @@ function renderHistory(records) {
         return;
     }
 
-    records.forEach((record) => {
+    records.forEach((record, index) => {
         const item = document.createElement("article");
         item.className = "history-item";
         const risk = record.risk_assessment || {
@@ -983,29 +1766,24 @@ function renderHistory(records) {
         const warnings = (record.quality_warnings || [])
             .map((warning) => `<li>${escapeHtml(warning)}</li>`)
             .join("");
-
-        item.innerHTML = `
-            <div class="history-header">
-                <div>
-                    <strong>${escapeHtml(record.detection_code || record.original_filename)}</strong>
-                    <p>${escapeHtml(record.original_filename || "")}</p>
-                </div>
-                <span>${escapeHtml(record.created_at || "未知时间")}</span>
-            </div>
-            <div class="history-meta">
-                <span>尺度：${escapeHtml(record.capture_scale || "-")}</span>
-                <span>构件：${escapeHtml(record.component_type || "-")}</span>
-                <span>场景：${escapeHtml(record.scenario_type || "-")}</span>
-                <span>质量：${escapeHtml(record.quality_status || "-")} / ${escapeHtml(record.quality_score ?? "-")}</span>
-                <span>风险：${escapeHtml(risk.risk_level || record.risk_level || "-")}</span>
-                <span>评分：${escapeHtml(formatRiskScore(risk))}</span>
-                <span>裂缝占比：${escapeHtml(record.crack_area_ratio ?? "-")}</span>
+        const riskLevel = risk.risk_level || record.risk_level || "-";
+        const detailBody = `
+            <div class="result-notes history-story-grid">
+                <article class="note-card">
+                    <span class="note-kicker">风险摘要</span>
+                    <p class="history-summary">${escapeHtml(risk.risk_summary || record.risk_summary || "暂无风险说明。")}</p>
+                </article>
+                <article class="note-card">
+                    <span class="note-kicker">量化摘要</span>
+                    <p class="history-summary">${escapeHtml(quantification.message || "暂无量化说明。")}</p>
+                </article>
+                <article class="note-card">
+                    <span class="note-kicker">处置建议</span>
+                    <p class="history-summary">${escapeHtml(risk.recommendation || record.recommendation || "暂无处置建议。")}</p>
+                </article>
             </div>
             ${buildStageCards(analysisStages)}
             ${buildQuantificationTable(markerDetection, quantification)}
-            <p class="history-summary">${escapeHtml(risk.risk_summary || record.risk_summary || "暂无风险说明。")}</p>
-            <p class="history-summary">${escapeHtml(quantification.message || "暂无量化说明。")}</p>
-            <p class="history-summary">${escapeHtml(risk.recommendation || record.recommendation || "暂无处置建议。")}</p>
             ${buildRiskBreakdownCard(risk)}
             ${warnings ? `<ul class="history-warnings">${warnings}</ul>` : ""}
             <div class="history-links">
@@ -1023,6 +1801,32 @@ function renderHistory(records) {
                 <button type="button" class="danger-button" onclick="deleteDetection(${record.id})">删除记录</button>
             </div>
         `;
+
+        item.innerHTML = `
+            <div class="history-header">
+                <div>
+                    <span class="result-capture-tag">${escapeHtml(formatCaptureScale(record.capture_scale || "-"))}</span>
+                    <strong>${escapeHtml(record.detection_code || record.original_filename)}</strong>
+                    <p>${escapeHtml(record.original_filename || "")}</p>
+                </div>
+                <div class="history-head-meta">
+                    <span class="meta-chip ${getRiskToneClass(riskLevel)}">
+                        <em>风险</em>
+                        <strong>${escapeHtml(riskLevel)}</strong>
+                    </span>
+                    <span class="history-time">${escapeHtml(record.created_at || "未知时间")}</span>
+                </div>
+            </div>
+            ${buildMetaChipGroup([
+                { label: "构件", value: record.component_type || "-" },
+                { label: "场景", value: record.scenario_type || "-" },
+                { label: "质量", value: `${record.quality_status || "-"} / ${record.quality_score ?? "-"}` },
+                { label: "评分", value: formatRiskScore(risk), toneClass: getRiskToneClass(riskLevel) },
+                { label: "裂缝占比", value: record.crack_area_ratio ?? "-" },
+            ])}
+            <p class="history-lead">${escapeHtml(risk.risk_summary || record.risk_summary || "暂无风险说明。")}</p>
+            ${buildDetailSection("查看本次分析详情", detailBody, { open: index === 0, className: "history-detail-section" })}
+        `;
         historyList.appendChild(item);
     });
 
@@ -1033,20 +1837,22 @@ function renderSurveySummary(summary) {
     const cards = document.getElementById("surveySummaryCards");
     const riskList = document.getElementById("surveyRiskList");
     const distribution = summary.risk_distribution || {};
+    renderHistoryHouseDirectory(summary.houses_with_history || []);
+    renderSurveyInsights(summary);
     cards.innerHTML = `
-        <article class="summary-card">
+        <article class="summary-card tone-neutral">
             <span>检测记录</span>
             <strong>${escapeHtml(summary.completed_records ?? 0)}</strong>
         </article>
-        <article class="summary-card">
+        <article class="summary-card tone-safe">
             <span>房屋数量</span>
             <strong>${escapeHtml(summary.house_count ?? 0)}</strong>
         </article>
-        <article class="summary-card">
+        <article class="summary-card tone-warning">
             <span>中高风险</span>
             <strong>${escapeHtml((distribution["中风险"] || 0) + (distribution["高风险"] || 0))}</strong>
         </article>
-        <article class="summary-card">
+        <article class="summary-card tone-danger">
             <span>高风险</span>
             <strong>${escapeHtml(distribution["高风险"] || 0)}</strong>
         </article>
@@ -1067,15 +1873,20 @@ function renderSurveySummary(summary) {
                             <strong>${escapeHtml(item.house_number || "-")}</strong>
                             <p>${escapeHtml(item.detection_code || "")}</p>
                         </div>
-                        <span>${escapeHtml(item.created_at || "未知时间")}</span>
+                        <div class="history-head-meta">
+                            <span class="meta-chip ${getRiskToneClass(item.risk_level)}">
+                                <em>风险</em>
+                                <strong>${escapeHtml(item.risk_level || "-")}</strong>
+                            </span>
+                            <span class="history-time">${escapeHtml(item.created_at || "未知时间")}</span>
+                        </div>
                     </div>
-                    <div class="history-meta">
-                        <span>风险：${escapeHtml(item.risk_level || "-")}</span>
-                        <span>构件：${escapeHtml(item.component_type || "-")}</span>
-                        <span>场景：${escapeHtml(item.scenario_type || "-")}</span>
-                        <span>最大宽度：${item.max_width_mm !== null && item.max_width_mm !== undefined ? `${escapeHtml(Number(item.max_width_mm).toFixed(3))} mm` : "-"}</span>
-                        <span>裂缝长度：${item.crack_length_mm !== null && item.crack_length_mm !== undefined ? `${escapeHtml(Number(item.crack_length_mm).toFixed(3))} mm` : "-"}</span>
-                    </div>
+                    ${buildMetaChipGroup([
+                        { label: "构件", value: item.component_type || "-" },
+                        { label: "场景", value: item.scenario_type || "-" },
+                        { label: "最大宽度", value: item.max_width_mm !== null && item.max_width_mm !== undefined ? `${Number(item.max_width_mm).toFixed(3)} mm` : "-" },
+                        { label: "裂缝长度", value: item.crack_length_mm !== null && item.crack_length_mm !== undefined ? `${Number(item.crack_length_mm).toFixed(3)} mm` : "-" },
+                    ])}
                 </article>
             `
         )
@@ -1101,7 +1912,11 @@ async function loadSurveySummary() {
 
 async function loadHouseDetections(houseId) {
     if (!houseId) {
-        setVisible("historyPanel", false);
+        setVisible("historyCurrentHint", false);
+        setVisible("historyOverview", false);
+        setVisible("trendSummaryCard", false);
+        setVisible("historyList", false);
+        setVisible("historyPanel", historyHouseDirectory.length > 0);
         return;
     }
 
@@ -1109,24 +1924,40 @@ async function loadHouseDetections(houseId) {
         const response = await fetch(`/house/${houseId}/detections`);
         const result = await response.json();
         if (!response.ok) {
-            setVisible("historyPanel", false);
+            setVisible("historyCurrentHint", false);
+            setVisible("historyOverview", false);
+            setVisible("trendSummaryCard", false);
+            setVisible("historyList", false);
+            setVisible("historyPanel", historyHouseDirectory.length > 0);
             return;
         }
 
+        activeHistoryHouseId = houseId;
+        document.getElementById("historyCurrentHint").textContent = result.house_number
+            ? `褰撳墠姝ｅ湪鏌ョ湅鎴垮眿 ${result.house_number} 鐨勫巻鍙叉娴嬭褰曘€?`
+            : "褰撳墠姝ｅ湪鏌ョ湅鎴垮眿鍘嗗彶妫€娴嬭褰曘€?";
+        setVisible("historyCurrentHint", true);
+        document.getElementById("historyCurrentHint").textContent = result.house_number
+            ? `\u5f53\u524d\u6b63\u5728\u67e5\u770b\u623f\u5c4b ${result.house_number} \u7684\u5386\u53f2\u68c0\u6d4b\u7ed3\u679c\u3001\u8d8b\u52bf\u4fe1\u606f\u548c\u62a5\u544a\u5165\u53e3\u3002`
+            : "\u5f53\u524d\u6b63\u5728\u67e5\u770b\u8be5\u623f\u5c4b\u7684\u5386\u53f2\u68c0\u6d4b\u8bb0\u5f55\u3002";
+        renderHistoryHouseDirectory();
         renderTrendSummary(result.trend_summary);
         renderHistory(result.records || []);
+        setVisible("historyPanel", true);
     } catch (error) {
         console.error("Failed to load house detections:", error);
     }
 }
 
 async function submitHouseInfo() {
+    updateFormValidationState("infoForm");
     const houseNumber = document.getElementById("house_number").value.trim();
     const houseType = getFieldValue("house_type");
     const crackLocation = getFieldValue("crack_location");
     const detectionType = getFieldValue("detection_type");
 
     if (!houseNumber || !houseType || !crackLocation || !detectionType) {
+        focusFirstMissingField("infoForm");
         setStatus("infoStatus", "error", "请完整填写房屋编号、房屋类型、裂缝位置和检测任务。");
         setGlobalStatus("error", "房屋档案信息尚未填写完整。");
         return;
@@ -1205,8 +2036,10 @@ function validateBundleSelection() {
 }
 
 async function uploadPhoto(forceLowQuality = false) {
+    updateFormValidationState("uploadForm");
     const missing = validateBundleSelection();
     if (missing.length) {
+        focusFirstMissingField("uploadForm");
         const names = missing.map((field) => field.label).join("、");
         setStatus("uploadStatus", "error", `请先补齐这几张图像：${names}。`);
         setGlobalStatus("error", `当前还缺少 ${names} 图像，无法执行三图成组上传。`);
@@ -1272,18 +2105,22 @@ async function uploadPhoto(forceLowQuality = false) {
         document.getElementById("taskLookupCode").value = currentTaskCode;
         renderDetectionTaskStatus(result);
         renderBundleQualityResults(result.quality_results || []);
-        setStatus("uploadStatus", "loading", result.message || "Task queued.");
+        setStatus("uploadStatus", "loading", localizeTaskMessage(result.message) || "任务已创建，等待执行 / Task queued.");
         setGlobalStatus(
             "loading",
-            currentTaskCode ? `Task ${currentTaskCode} queued. Status will refresh automatically.` : "Task queued."
+            currentTaskCode
+                ? `任务 ${currentTaskCode} 已排队，状态将自动刷新 / Task queued. Status will refresh automatically.`
+                : "任务已创建，等待执行 / Task queued."
         );
-        startTaskPolling(currentTaskCode);
+        if (currentTaskCode) {
+            startTaskPolling(currentTaskCode);
+        }
         return;
     } catch (error) {
         setStatus("uploadStatus", "error", `批量上传失败：${error}`);
         setGlobalStatus("error", `批量上传失败：${error}`);
     } finally {
-        setButtonState("uploadButton", false, "上传长景/中景/近景并分析");
+        setButtonState("uploadButton", false, "上传三景图并启动分析");
     }
 }
 
@@ -1301,9 +2138,11 @@ async function deleteDetection(recordId) {
             return;
         }
 
-        if (currentHouseId) {
-            await loadHouseDetections(currentHouseId);
+        const historyHouseId = activeHistoryHouseId || currentHouseId;
+        if (historyHouseId) {
+            await loadHouseDetections(historyHouseId);
         }
+        await loadSurveySummary();
         setGlobalStatus("success", "检测记录已删除。");
     } catch (error) {
         setGlobalStatus("error", `删除记录失败：${error}`);
@@ -1320,9 +2159,11 @@ async function rerunDetection(recordId) {
             return;
         }
 
-        if (currentHouseId) {
-            await loadHouseDetections(currentHouseId);
+        const historyHouseId = activeHistoryHouseId || currentHouseId;
+        if (historyHouseId) {
+            await loadHouseDetections(historyHouseId);
         }
+        await loadSurveySummary();
         setGlobalStatus("success", "重新分析完成，历史记录已刷新。");
     } catch (error) {
         setGlobalStatus("error", `重新分析失败：${error}`);
@@ -1335,4 +2176,10 @@ resetMediumTargetPrecheck();
 loadTargetSpecs();
 loadSurveySummary();
 syncTargetHouseNumber(false);
+initializeWorkspaceValidation();
 document.getElementById("house_number").addEventListener("input", () => syncTargetHouseNumber(false));
+document.getElementById("target_crack_size")?.addEventListener("change", () => syncTargetSpecByCrackSize(true));
+document.getElementById("target_spec")?.addEventListener("change", updateTargetSpecGuidance);
+toggleOtherInput("house_type", { focus: false });
+toggleOtherInput("crack_location", { focus: false });
+toggleOtherInput("detection_type", { focus: false });

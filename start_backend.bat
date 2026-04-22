@@ -1,4 +1,4 @@
 @echo off
 setlocal
 
-powershell -ExecutionPolicy Bypass -File "%~dp0start_backend.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start_backend.ps1"

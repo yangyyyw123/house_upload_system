@@ -4,36 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260415-task-flow-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260422-single-column-entry-1') }}">
 </head>
-<body>
+<body class="platform-theme">
     <main class="page">
-        <section class="hero">
-            <div class="hero-copy">
-                <p class="eyebrow">Crowdsourcing Crack Inspection</p>
-                <h1>房屋裂缝智能检测平台</h1>
-                <p class="hero-text">
-                    面向常规巡检、农村自建房排查和灾后快速评估。系统支持房屋档案绑定、图像质量预检、裂缝自动分析、
-                    风险提示和历次检测趋势追踪。
+        <header class="platform-topbar" id="top">
+            <div class="platform-brand">
+                <span class="platform-brand-kicker">Inspection Command Center</span>
+                <strong>房屋裂缝智能检测平台</strong>
+                <p class="platform-brand-summary">
+                    支持房屋档案建模、拍摄指引、二维码靶标生成、三景图像上传预检、检测任务追踪与历史风险汇总。
                 </p>
             </div>
-            <div class="hero-checklist">
-                <strong>本次升级已接入</strong>
-                <ul>
-                    <li>上传前图像质量预检</li>
-                    <li>长景 / 中景 / 近景拍摄标注</li>
-                    <li>风险等级与处置建议</li>
-                    <li>靶标识别与毫米级量化</li>
-                    <li>房屋历史检测趋势追踪</li>
-                </ul>
+            <nav class="platform-nav" aria-label="主导航">
+                <a class="platform-nav-item platform-nav-item-active" href="#top">平台总览</a>
+                <a class="platform-nav-item" href="#archiveSection">档案建模</a>
+                <a class="platform-nav-item" href="#guidanceSection">拍摄指引</a>
+                <a class="platform-nav-item" href="#targetSection">靶标生成</a>
+                <a class="platform-nav-item" href="#uploadSection">上传分析</a>
+                <a class="platform-nav-item" href="#surveyPanel">历史汇总</a>
+            </nav>
+            <div class="platform-signal" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
             </div>
-        </section>
+        </header>
 
         <section id="globalStatus" class="global-status status status-idle">
             页面已就绪。建议先建立房屋档案，再上传裂缝图像。
         </section>
 
-        <section class="panel">
+        <section id="archiveSection" class="panel panel-archive">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 1</p>
@@ -42,120 +44,256 @@
                 <p class="section-note">档案会用于绑定检测历史、趋势分析和报告编号。</p>
             </div>
 
-            <div class="binding-card">
-                <strong>当前绑定房屋</strong>
-                <p id="houseBindingText">尚未绑定房屋信息。提交房屋档案后，后续图像会自动归档到对应房屋。</p>
+            <div class="info-layout">
+                <aside class="info-guide">
+                    <article class="info-guide-card info-guide-card-accent">
+                        <span class="hero-side-kicker">建档说明</span>
+                        <strong>先建档，再上传</strong>
+                        <p>房屋档案是整个平台的归档入口。后续上传分析、历史趋势、普查汇总都会自动挂到这条档案上。</p>
+                    </article>
+                    <article class="info-guide-card">
+                        <span class="hero-side-kicker">填写建议</span>
+                        <ul class="info-guide-list">
+                            <li>房屋编号建议保持唯一且可回查。</li>
+                            <li>裂缝位置尽量写到构件或部位级别。</li>
+                            <li>检测任务尽量与现场实际作业一致。</li>
+                        </ul>
+                    </article>
+                    <article class="info-guide-card">
+                        <span class="hero-side-kicker">后续联动</span>
+                        <div class="hero-scene-tags info-link-tags">
+                            <span>上传分析</span>
+                            <span>历史趋势</span>
+                            <span>普查汇总</span>
+                        </div>
+                    </article>
+                </aside>
+
+                <div class="info-main">
+                    <section class="workspace-panel workspace-panel-archive">
+                        <div class="workspace-panel-header">
+                            <span class="workspace-panel-kicker">填写区 FORM AREA</span>
+                            <div class="workspace-panel-copy">
+                                <h3>房屋档案填写区</h3>
+                                <p>房屋绑定、信息录入和提交状态都集中在这里，用户进入页面后可以立刻定位到需要填写的位置。</p>
+                            </div>
+                        </div>
+                    <div class="binding-card">
+                        <strong>当前绑定房屋</strong>
+                        <p id="houseBindingText">尚未绑定房屋信息。提交房屋档案后，后续图像会自动归档到对应房屋。</p>
+                    </div>
+
+                    <form id="infoForm" class="form-grid form-grid-enhanced info-form-grid">
+                        <article class="field-card field-card-wide">
+                            <label for="house_number">房屋编号 House ID</label>
+                            <input type="text" id="house_number" name="house_number" placeholder="例如：HOUSE-001" required>
+                            <p class="field-helper">建议使用统一编号规则，便于检测历史、报告编号和后续普查汇总。</p>
+                        </article>
+
+                        <article class="field-card">
+                            <label for="house_type">房屋类型 House Type</label>
+                            <select id="house_type" name="house_type" onchange="toggleOtherInput('house_type')" required>
+                                <option value="">请选择房屋类型</option>
+                                <option value="城市住宅">城市住宅</option>
+                                <option value="农村自建房">农村自建房</option>
+                                <option value="公寓">公寓</option>
+                                <option value="别墅">别墅</option>
+                                <option value="厂房">厂房</option>
+                                <option value="其他">其他</option>
+                            </select>
+                            <div id="house_type_other_wrap" class="field-addon hidden-field">
+                                <span class="field-addon-label">其他房屋类型补充</span>
+                                <input type="text" id="house_type_other" placeholder="请输入自定义房屋类型" disabled>
+                                <p class="field-helper">当选项中没有合适类型时，请在这里补充具体房屋类型。</p>
+                            </div>
+                        </article>
+
+                        <article class="field-card">
+                            <label for="crack_location">裂缝位置 Crack Location</label>
+                            <select id="crack_location" name="crack_location" onchange="toggleOtherInput('crack_location')" required>
+                                <option value="">请选择裂缝位置</option>
+                                <option value="墙体">墙体</option>
+                                <option value="梁">梁</option>
+                                <option value="柱">柱</option>
+                                <option value="楼板">楼板</option>
+                                <option value="门窗洞口">门窗洞口</option>
+                                <option value="屋顶">屋顶</option>
+                                <option value="地面">地面</option>
+                                <option value="其他">其他</option>
+                            </select>
+                            <div id="crack_location_other_wrap" class="field-addon hidden-field">
+                                <span class="field-addon-label">其他裂缝位置补充</span>
+                                <input type="text" id="crack_location_other" placeholder="请输入自定义裂缝位置" disabled>
+                                <p class="field-helper">例如女儿墙、檐口、基础边缘等未列出的具体位置。</p>
+                            </div>
+                        </article>
+
+                        <article class="field-card">
+                            <label for="detection_type">检测任务 Detection Task</label>
+                            <select id="detection_type" name="detection_type" onchange="toggleOtherInput('detection_type')" required>
+                                <option value="">请选择检测任务</option>
+                                <option value="常规巡检">常规巡检</option>
+                                <option value="裂缝精细测量">裂缝精细测量</option>
+                                <option value="房屋普查">房屋普查</option>
+                                <option value="灾后评估">灾后评估</option>
+                                <option value="其他">其他</option>
+                            </select>
+                            <div id="detection_type_other_wrap" class="field-addon hidden-field">
+                                <span class="field-addon-label">其他检测任务补充</span>
+                                <input type="text" id="detection_type_other" placeholder="请输入自定义检测任务" disabled>
+                                <p class="field-helper">选择“其他”后，请填写具体任务，例如专项抽检、修复复核等。</p>
+                            </div>
+                        </article>
+
+                        <div class="field-card field-card-wide form-action-card">
+                            <div>
+                                <strong>提交后自动绑定当前房屋</strong>
+                                <p class="field-helper">档案建立成功后，上传分析、历史检测和普查汇总都会自动关联到该房屋。</p>
+                            </div>
+                            <button id="submitInfoButton" type="button" onclick="submitHouseInfo()">提交房屋档案</button>
+                            <p id="infoStatus" class="status status-idle">等待提交房屋档案。</p>
+                        </div>
+                    </form>
+                    </section>
+                </div>
             </div>
-
-            <form id="infoForm" class="form-grid">
-                <label for="house_number">房屋编号</label>
-                <input type="text" id="house_number" name="house_number" placeholder="例如：HOUSE-001" required>
-
-                <label for="house_type">房屋类型</label>
-                <select id="house_type" name="house_type" onchange="toggleOtherInput('house_type')">
-                    <option value="">请选择房屋类型</option>
-                    <option value="城市住宅">城市住宅</option>
-                    <option value="农村自建房">农村自建房</option>
-                    <option value="公寓">公寓</option>
-                    <option value="别墅">别墅</option>
-                    <option value="厂房">厂房</option>
-                    <option value="其他">其他</option>
-                </select>
-                <input type="text" id="house_type_other" class="hidden-field" placeholder="请输入自定义房屋类型" disabled>
-
-                <label for="crack_location">裂缝位置</label>
-                <select id="crack_location" name="crack_location" onchange="toggleOtherInput('crack_location')">
-                    <option value="">请选择裂缝位置</option>
-                    <option value="墙体">墙体</option>
-                    <option value="梁">梁</option>
-                    <option value="柱">柱</option>
-                    <option value="楼板">楼板</option>
-                    <option value="门窗洞口">门窗洞口</option>
-                    <option value="屋顶">屋顶</option>
-                    <option value="地面">地面</option>
-                    <option value="其他">其他</option>
-                </select>
-                <input type="text" id="crack_location_other" class="hidden-field" placeholder="请输入自定义裂缝位置" disabled>
-
-                <label for="detection_type">检测任务</label>
-                <select id="detection_type" name="detection_type" onchange="toggleOtherInput('detection_type')">
-                    <option value="">请选择检测任务</option>
-                    <option value="常规巡检">常规巡检</option>
-                    <option value="裂缝精细测量">裂缝精细测量</option>
-                    <option value="房屋普查">房屋普查</option>
-                    <option value="灾后评估">灾后评估</option>
-                    <option value="其他">其他</option>
-                </select>
-                <input type="text" id="detection_type_other" class="hidden-field" placeholder="请输入自定义检测任务" disabled>
-
-                <button id="submitInfoButton" type="button" onclick="submitHouseInfo()">提交房屋档案</button>
-                <p id="infoStatus" class="status status-idle">等待提交房屋档案。</p>
-            </form>
         </section>
 
-        <section class="panel">
+        <section id="guidanceSection" class="panel panel-guidance">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 2</p>
                     <h2>拍摄指引</h2>
                 </div>
-                <p class="section-note">建议使用长景、中景、近景三类照片，且二维码靶标与裂缝保持同平面。</p>
+                <p class="section-note">建议按长景、中景、近景三类照片完成上传，并让二维码靶标与裂缝尽量保持同平面。</p>
             </div>
 
-            <div class="guidance-grid">
-                <article class="guide-card">
-                    <span class="guide-tag">长景</span>
-                    <h3>构件整体</h3>
-                    <p>完整拍到裂缝所在构件，方便判断裂缝的整体位置和走向。</p>
-                </article>
-                <article class="guide-card">
-                    <span class="guide-tag">中景</span>
-                    <h3>裂缝 + 靶标同框</h3>
-                    <p>确保裂缝与二维码校准靶同时入镜、无遮挡，这是尺度换算的关键照片。</p>
-                </article>
-                <article class="guide-card">
-                    <span class="guide-tag">近景</span>
-                    <h3>细节测量</h3>
-                    <p>聚焦裂缝细节，避免抖动和虚焦，用于提高细微裂缝测量的稳定性。</p>
-                </article>
+            <div class="guide-layout">
+                <aside class="guide-overview">
+                    <article class="guide-overview-card guide-overview-card-accent">
+                        <span class="hero-side-kicker">拍摄目标</span>
+                        <strong>三张照片对应三个判断层级</strong>
+                        <p>长景定位构件，中景完成靶标识别与尺度换算，近景补足裂缝边缘和宽度细节。</p>
+                    </article>
+                    <article class="guide-overview-card">
+                        <span class="hero-side-kicker">现场要求</span>
+                        <strong>先保证清晰，再追求细节</strong>
+                        <p>优先避免虚焦、反光和明显倾斜。中景照片里裂缝与靶标需要同框、无遮挡，便于后续量化。</p>
+                    </article>
+                </aside>
+
+                <div class="guidance-grid guidance-grid-expanded">
+                    <article class="guide-card guide-card-blue">
+                        <span class="guide-tag">长景</span>
+                        <h3>构件整体</h3>
+                        <p>完整拍到裂缝所在构件，方便判断裂缝在房屋中的位置、走向和周边构造关系。</p>
+                    </article>
+                    <article class="guide-card guide-card-green">
+                        <span class="guide-tag">中景</span>
+                        <h3>裂缝与靶标同框</h3>
+                        <p>确保二维码靶标与裂缝同框、同平面、无遮挡，这是后续毫米级量化的关键照片。</p>
+                    </article>
+                    <article class="guide-card guide-card-amber">
+                        <span class="guide-tag">近景</span>
+                        <h3>细节补充</h3>
+                        <p>对准裂缝边缘与端部细节，避免抖动和虚焦，用于提升细微裂缝测量的稳定性。</p>
+                    </article>
+                </div>
             </div>
         </section>
 
-        <section class="panel">
+        <section id="targetSection" class="panel panel-target">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 2A</p>
                     <h2>生成二维码靶标</h2>
                 </div>
-                <p class="section-note">先下载并打印靶标，再执行中景与近景拍摄。第一版优先保证“可识别 + 可下载”。</p>
+                <p class="section-note">支持按检测区域裂缝大小选择 120 × 120、80 × 80、40 × 40、20 × 20 mm 靶标，生成后即可下载打印。</p>
             </div>
 
-            <form id="targetForm" class="form-grid">
-                <label for="target_house_number">房屋编号</label>
-                <input type="text" id="target_house_number" name="target_house_number" placeholder="例如：HOUSE-001" required>
+            <div class="target-layout">
+                <aside class="target-guide">
+                    <article class="target-guide-card target-guide-card-accent">
+                        <span class="hero-side-kicker">使用建议</span>
+                        <strong>靶标优先服务中景识别</strong>
+                        <p>根据检测区域裂缝大小选择靶标尺寸。裂缝范围越大，优先选择更大的靶标；微细裂缝和狭小张贴区可选 20 × 20 mm 微型靶标。</p>
+                    </article>
+                    <article class="target-guide-card">
+                        <span class="hero-side-kicker">打印提示</span>
+                        <ul class="info-guide-list">
+                            <li>优先下载 PDF 打印，保证尺寸稳定。</li>
+                            <li>张贴位置尽量与裂缝在同一平面。</li>
+                            <li>打印后不要裁掉四周边框和定位区域。</li>
+                        </ul>
+                    </article>
+                </aside>
 
-                <label for="target_region">检测区域</label>
-                <input type="text" id="target_region" name="target_region" placeholder="例如：东侧承重墙 / 门窗洞口" required>
+                <div class="target-workspace">
+                    <section class="workspace-panel workspace-panel-target">
+                        <div class="workspace-panel-header">
+                            <span class="workspace-panel-kicker">填写区 FORM AREA</span>
+                            <div class="workspace-panel-copy">
+                                <h3>靶标参数填写区</h3>
+                                <p>靶标生成所需的房屋编号、检测区域和规格选择都集中在这里，填写路径更清晰。</p>
+                            </div>
+                        </div>
+                    <form id="targetForm" class="form-grid form-grid-enhanced target-form-grid">
+                        <article class="field-card">
+                            <label for="target_house_number">房屋编号 House ID</label>
+                            <input type="text" id="target_house_number" name="target_house_number" placeholder="例如：HOUSE-001" required>
+                            <p class="field-helper">默认会跟随上方房屋编号，也可以单独填写用于靶标打印。</p>
+                        </article>
 
-                <label for="target_scene_type">场景类型</label>
-                <select id="target_scene_type" name="target_scene_type">
-                    <option value="常规巡检">常规巡检</option>
-                    <option value="裂缝精细测量">裂缝精细测量</option>
-                    <option value="房屋普查">房屋普查</option>
-                    <option value="灾后评估">灾后评估</option>
-                </select>
+                        <article class="field-card">
+                            <label for="target_region">检测区域 Inspection Region</label>
+                            <input type="text" id="target_region" name="target_region" placeholder="例如：东侧承重墙 / 门窗洞口" required>
+                            <p class="field-helper">建议写到构件或部位级别，便于后续现场张贴和回查。</p>
+                        </article>
 
-                <label for="target_spec">靶标规格</label>
-                <select id="target_spec" name="target_spec"></select>
+                        <article class="field-card">
+                            <label for="target_scene_type">场景类型 Scene Type</label>
+                            <select id="target_scene_type" name="target_scene_type" required>
+                                <option value="常规巡检">常规巡检</option>
+                                <option value="裂缝精细测量">裂缝精细测量</option>
+                                <option value="房屋普查">房屋普查</option>
+                                <option value="灾后评估">灾后评估</option>
+                            </select>
+                        </article>
 
-                <button id="generateTargetButton" type="button" onclick="generateTarget()">生成二维码靶标</button>
-                <p id="targetStatus" class="status status-idle">填写房屋编号、检测区域和场景类型后即可生成 PNG / PDF 靶标。</p>
-            </form>
+                        <article class="field-card">
+                            <label for="target_crack_size">裂缝尺度 Crack Scale</label>
+                            <select id="target_crack_size" name="target_crack_size" required>
+                                <option value="large">较大裂缝 / 大范围检测区</option>
+                                <option value="standard" selected>常规裂缝 / 默认推荐</option>
+                                <option value="fine">细裂缝 / 局部检测区</option>
+                                <option value="micro">微细裂缝 / 狭小张贴区</option>
+                            </select>
+                            <p id="target_crack_size_hint" class="field-helper">先选择检测区域内裂缝尺度，再联动推荐靶标尺寸。</p>
+                        </article>
 
-            <div id="targetResult" class="target-result hidden"></div>
+                        <article class="field-card">
+                            <label for="target_spec">靶标规格 Target Spec</label>
+                            <select id="target_spec" name="target_spec" required></select>
+                            <p id="target_spec_hint" class="field-helper">根据检测区域裂缝大小选择靶标尺寸。</p>
+                        </article>
+
+                        <div class="field-card field-card-wide form-action-card">
+                            <div>
+                                <strong>生成后可直接下载 PNG / PDF</strong>
+                                <p class="field-helper">建议先打印靶标再拍摄中景和近景，这样后续量化更稳定。</p>
+                            </div>
+                            <button id="generateTargetButton" type="button" onclick="generateTarget()">生成二维码靶标</button>
+                            <p id="targetStatus" class="status status-idle">填写房屋编号、检测区域、裂缝尺度和场景类型后即可生成 PNG / PDF 靶标。</p>
+                        </div>
+                    </form>
+                    </section>
+
+                    <div id="targetResult" class="target-result hidden"></div>
+                </div>
+            </div>
         </section>
 
-        <section class="panel">
+        <section id="uploadSection" class="panel panel-upload">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 3</p>
@@ -164,133 +302,188 @@
                 <p class="section-note">系统会先完成识别阶段，再进入量化阶段，并根据是否识别到靶标决定能否输出 mm 级指标。</p>
             </div>
 
-            <form id="uploadForm" class="form-grid" enctype="multipart/form-data">
-                <label for="scenario_type">场景类型</label>
-                <select id="scenario_type" name="scenario_type">
-                    <option value="常规巡检">常规巡检</option>
-                    <option value="房屋普查">房屋普查</option>
-                    <option value="灾后评估">灾后评估</option>
-                </select>
+            <form id="uploadForm" class="upload-form" enctype="multipart/form-data">
+                <article class="upload-hero-card">
+                    <span class="hero-side-kicker">上传前检查</span>
+                    <strong>按长景 / 中景 / 近景顺序准备图像</strong>
+                    <p>系统会先检查中景二维码与图像质量，再进入正式分析。上传成功后可根据任务编号继续查询处理进度。</p>
+                    <div class="upload-flow" aria-label="上传流程">
+                        <span>长景定位</span>
+                        <span>中景识别</span>
+                        <span>近景量化</span>
+                    </div>
+                </article>
 
-                <label for="component_type">构件类型</label>
-                <select id="component_type" name="component_type">
-                    <option value="墙体">墙体</option>
-                    <option value="承重墙">承重墙</option>
-                    <option value="梁">梁</option>
-                    <option value="柱">柱</option>
-                    <option value="楼板">楼板</option>
-                    <option value="门窗洞口">门窗洞口</option>
-                </select>
-
-                <div class="upload-bundle">
-                    <article class="upload-slot">
-                        <label for="long_view">长景图像</label>
-                        <input type="file" name="long_view" id="long_view" accept="image/*" required onchange="previewBundleImage('long_view')">
-                        <div id="long_view_preview_card" class="preview-card hidden">
-                            <div class="preview-head">
-                                <strong>长景预览</strong>
-                                <span id="long_view_preview_meta">尚未读取图像信息</span>
+                <div class="upload-analysis-grid">
+                    <div class="upload-main-column">
+                        <section class="workspace-panel workspace-panel-upload-main">
+                            <div class="workspace-panel-header">
+                                <span class="workspace-panel-kicker">上传区 UPLOAD WORKSPACE</span>
+                                <div class="workspace-panel-copy">
+                                    <h3>参数设置与上传操作区</h3>
+                                    <p>场景参数、图像上传、启动分析和状态反馈都集中在这个区域，操作入口更明显。</p>
+                                </div>
                             </div>
-                            <img id="long_view_preview" alt="长景图像预览">
-                            <p id="long_view_preview_name" class="preview-name">尚未选择图像</p>
+                        <div class="upload-config-grid">
+                            <article class="upload-config-card">
+                                <label for="scenario_type">场景类型 Scenario Type</label>
+                                <select id="scenario_type" name="scenario_type">
+                                    <option value="常规巡检">常规巡检</option>
+                                    <option value="房屋普查">房屋普查</option>
+                                    <option value="灾后评估">灾后评估</option>
+                                </select>
+                            </article>
+                            <article class="upload-config-card">
+                                <label for="component_type">构件类型 Component Type</label>
+                                <select id="component_type" name="component_type">
+                                    <option value="墙体">墙体</option>
+                                    <option value="承重墙">承重墙</option>
+                                    <option value="梁">梁</option>
+                                    <option value="柱">柱</option>
+                                    <option value="楼板">楼板</option>
+                                    <option value="门窗洞口">门窗洞口</option>
+                                </select>
+                            </article>
                         </div>
-                    </article>
-                    <article class="upload-slot">
-                        <label for="medium_view">中景图像</label>
-                        <input type="file" name="medium_view" id="medium_view" accept="image/*" required onchange="previewBundleImage('medium_view')">
-                        <div id="medium_view_preview_card" class="preview-card hidden">
-                            <div class="preview-head">
-                                <strong>中景预览</strong>
-                                <span id="medium_view_preview_meta">尚未读取图像信息</span>
+
+                        <section class="upload-stage-card upload-stage-card-main">
+                            <div class="upload-stage-head">
+                                <div>
+                                    <strong>图像上传区 Image Bundle</strong>
+                                    <p class="hint">按长景 / 中景 / 近景顺序补齐，系统会先完成预检，再进入正式分析。</p>
+                                </div>
+                                <span class="stage-chip">100MB Max</span>
                             </div>
-                            <img id="medium_view_preview" alt="中景图像预览">
-                            <p id="medium_view_preview_name" class="preview-name">尚未选择图像</p>
-                        </div>
-                    </article>
-                    <article class="upload-slot">
-                        <label for="close_view">近景图像</label>
-                        <input type="file" name="close_view" id="close_view" accept="image/*" required onchange="previewBundleImage('close_view')">
-                        <div id="close_view_preview_card" class="preview-card hidden">
-                            <div class="preview-head">
-                                <strong>近景预览</strong>
-                                <span id="close_view_preview_meta">尚未读取图像信息</span>
+
+                            <div class="upload-bundle">
+                                <article class="upload-slot">
+                                    <label for="long_view">长景图像 Long View</label>
+                                    <input type="file" name="long_view" id="long_view" accept="image/*" required onchange="previewBundleImage('long_view')">
+                                    <div id="long_view_preview_card" class="preview-card hidden">
+                                        <div class="preview-head">
+                                            <strong>长景预览 Long View</strong>
+                                            <span id="long_view_preview_meta">尚未读取图像信息</span>
+                                        </div>
+                                        <img id="long_view_preview" alt="长景图像预览">
+                                        <p id="long_view_preview_name" class="preview-name">尚未选择图像</p>
+                                    </div>
+                                </article>
+                                <article class="upload-slot">
+                                    <label for="medium_view">中景图像 Medium View</label>
+                                    <input type="file" name="medium_view" id="medium_view" accept="image/*" required onchange="previewBundleImage('medium_view')">
+                                    <div id="medium_view_preview_card" class="preview-card hidden">
+                                        <div class="preview-head">
+                                            <strong>中景预览 Medium View</strong>
+                                            <span id="medium_view_preview_meta">尚未读取图像信息</span>
+                                        </div>
+                                        <img id="medium_view_preview" alt="中景图像预览">
+                                        <p id="medium_view_preview_name" class="preview-name">尚未选择图像</p>
+                                    </div>
+                                </article>
+                                <article class="upload-slot">
+                                    <label for="close_view">近景图像 Close View</label>
+                                    <input type="file" name="close_view" id="close_view" accept="image/*" required onchange="previewBundleImage('close_view')">
+                                    <div id="close_view_preview_card" class="preview-card hidden">
+                                        <div class="preview-head">
+                                            <strong>近景预览 Close View</strong>
+                                            <span id="close_view_preview_meta">尚未读取图像信息</span>
+                                        </div>
+                                        <img id="close_view_preview" alt="近景图像预览">
+                                        <p id="close_view_preview_name" class="preview-name">尚未选择图像</p>
+                                    </div>
+                                </article>
                             </div>
-                            <img id="close_view_preview" alt="近景图像预览">
-                            <p id="close_view_preview_name" class="preview-name">尚未选择图像</p>
+
+                            <div id="bundleSizePanel" class="bundle-size-panel">
+                                <strong>批量上传大小</strong>
+                                <p id="bundleSizeSummary">尚未选择完整的长景 / 中景 / 近景图像。</p>
+                            </div>
+
+                            <div id="targetPrecheckPanel" class="target-precheck-panel hidden">
+                                <strong>中景二维码预检</strong>
+                                <p id="targetPrecheckSummary">等待选择中景图像后进行二维码与四角锚点预检。</p>
+                            </div>
+
+                            <div id="bundleQualityPanel" class="quality-panel hidden">
+                                <div class="quality-header">
+                                    <div>
+                                        <strong>三图批量质量预检</strong>
+                                        <p id="bundleQualitySummary">等待上传后进行检测。</p>
+                                    </div>
+                                </div>
+                                <div id="bundleQualityList" class="bundle-quality-list"></div>
+                                <button id="overrideUploadButton" type="button" class="secondary-button hidden" onclick="uploadPhoto(true)">
+                                    仍然继续上传三张图并分析
+                                </button>
+                            </div>
+                        </section>
+
+                        <div class="action-row action-row-primary action-row-upload">
+                            <button id="uploadButton" type="button" onclick="uploadPhoto()">上传三景图并启动分析</button>
+                            <p class="hint">
+                                三张图像会被视作同一批次，总请求大小上限为 100MB。若未识别到靶标，系统仍会给出像素级量化结果。
+                            </p>
                         </div>
-                    </article>
-                </div>
+                        <p id="uploadStatus" class="status status-idle">等待上传长景 / 中景 / 近景三张图像。</p>
+                        </section>
+                    </div>
 
-                <div id="bundleSizePanel" class="bundle-size-panel">
-                    <strong>批量上传大小</strong>
-                    <p id="bundleSizeSummary">尚未选择完整的长景 / 中景 / 近景图像。</p>
-                </div>
-
-                <div id="targetPrecheckPanel" class="target-precheck-panel hidden">
-                    <strong>中景二维码预检</strong>
-                    <p id="targetPrecheckSummary">等待选择中景图像后进行二维码与四角锚点预检。</p>
-                </div>
-
-                <div id="bundleQualityPanel" class="quality-panel hidden">
-                    <div class="quality-header">
-                        <div>
-                            <strong>三图批量质量预检</strong>
-                            <p id="bundleQualitySummary">等待上传后进行检测。</p>
+                    <aside class="upload-side-column">
+                        <div class="task-query-panel task-query-panel-track">
+                            <div class="task-panel-heading">
+                                <strong>检测任务 Detection Task</strong>
+                                <span class="task-panel-tag">可追踪 / Trackable</span>
+                            </div>
+                            <div class="task-query-row">
+                                <input type="text" id="taskLookupCode" placeholder="输入任务编号 / Enter task code">
+                                <button type="button" class="secondary-button" onclick="queryDetectionTask()">查询任务 / Query Task</button>
+                            </div>
+                            <p class="hint">上传后系统会返回任务编号，后续可继续查询进度、批次编号和完成时间。</p>
                         </div>
-                    </div>
-                    <div id="bundleQualityList" class="bundle-quality-list"></div>
-                    <button id="overrideUploadButton" type="button" class="secondary-button hidden" onclick="uploadPhoto(true)">
-                        仍然继续上传三张图并分析
-                    </button>
-                </div>
 
-                <div class="task-query-panel">
-                    <strong>Detection Task</strong>
-                    <div class="task-query-row">
-                        <input type="text" id="taskLookupCode" placeholder="Enter task code">
-                        <button type="button" class="secondary-button" onclick="queryDetectionTask()">Query Task</button>
-                    </div>
-                    <p class="hint">After upload, the system returns a task code that can be used to check progress later.</p>
-                </div>
+                        <div id="taskStatusPanel" class="task-status-panel task-status-panel-track hidden">
+                            <div class="task-status-head">
+                                <strong>任务状态 Task Status</strong>
+                                <span id="taskStatusPhase">-</span>
+                            </div>
+                            <p id="taskStatusSummary">暂无任务状态 / No task status available.</p>
+                            <div class="task-status-grid">
+                                <article>
+                                    <span>任务编号 Task Code</span>
+                                    <strong id="taskStatusCode">-</strong>
+                                </article>
+                                <article>
+                                    <span>批次编号 Bundle Code</span>
+                                    <strong id="taskStatusBundle">-</strong>
+                                </article>
+                                <article>
+                                    <span>处理进度 Progress</span>
+                                    <strong id="taskStatusProgress">-</strong>
+                                </article>
+                                <article>
+                                    <span>更新时间 Updated At</span>
+                                    <strong id="taskStatusTime">-</strong>
+                                </article>
+                            </div>
+                            <p id="taskStatusError" class="task-status-error-text"></p>
+                        </div>
 
-                <div id="taskStatusPanel" class="task-status-panel hidden">
-                    <div class="task-status-head">
-                        <strong>Task Status</strong>
-                        <span id="taskStatusPhase">-</span>
-                    </div>
-                    <p id="taskStatusSummary">No task status available.</p>
-                    <div class="task-status-grid">
-                        <article>
-                            <span>Task Code</span>
-                            <strong id="taskStatusCode">-</strong>
+                        <article class="task-guide-card task-guide-card-track">
+                            <span class="hero-side-kicker">任务说明</span>
+                            <strong>上传后返回任务编号</strong>
+                            <ul class="task-guide-list">
+                                <li>先完成中景二维码预检，再提交长景、中景、近景三张图像。</li>
+                                <li>上传成功后可使用任务编号继续查询处理进度和批次信息。</li>
+                                <li>结果页会汇总三景识别、量化和风险结论，便于复核和归档。</li>
+                            </ul>
                         </article>
-                        <article>
-                            <span>Bundle Code</span>
-                            <strong id="taskStatusBundle">-</strong>
-                        </article>
-                        <article>
-                            <span>Progress</span>
-                            <strong id="taskStatusProgress">-</strong>
-                        </article>
-                        <article>
-                            <span>Updated At</span>
-                            <strong id="taskStatusTime">-</strong>
-                        </article>
-                    </div>
-                    <p id="taskStatusError" class="task-status-error-text"></p>
-                </div>
 
-                <div class="action-row">
-                    <button id="uploadButton" type="button" onclick="uploadPhoto()">上传长景/中景/近景并分析</button>
-                    <p class="hint">
-                        当前会把三张图像作为同一批次上传，总请求大小上限为 100MB。系统会先做识别阶段，再做量化阶段；若未识别到靶标，仍会给出像素级量化结果。
-                    </p>
+                    </aside>
                 </div>
-                <p id="uploadStatus" class="status status-idle">等待上传长景 / 中景 / 近景三张图像。</p>
             </form>
         </section>
 
-        <section id="uploadResult" class="panel result-panel hidden">
+        <section id="uploadResult" class="panel result-panel panel-results hidden">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 4</p>
@@ -298,12 +491,13 @@
                 </div>
                 <p class="section-note">这里会显示长景 / 中景 / 近景三张图各自的识别阶段、量化阶段、风险结论和统计图。</p>
             </div>
+            <div id="batchResultOverview" class="dashboard-overview hidden"></div>
             <div id="batchBundleActions" class="report-actions hidden"></div>
             <div id="bundleProjectionPanel" class="note-card bundle-projection-panel hidden"></div>
             <div id="batchResultList" class="batch-result-list"></div>
         </section>
 
-        <section id="historyPanel" class="panel hidden">
+        <section id="historyPanel" class="panel panel-history hidden">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 5</p>
@@ -311,15 +505,25 @@
                 </div>
                 <p class="section-note">支持查看同一房屋的历次检测结果和趋势状态。</p>
             </div>
+            <div id="historyHouseBoard" class="history-directory-board hidden">
+                <div class="section-subhead">
+                    <strong>宸叉湁鍘嗗彶璁板綍鐨勬埧灞?/strong>
+                    <p>鐐瑰嚮鎴垮眿缂栧彿鍙洿鎺ユ墦寮€璇ユ埧灞嬫渶鏂颁竴娆℃娴嬫姤鍛婏紝涔熷彲鍦ㄥ垪琛ㄤ腑鏌ョ湅鍏跺巻鍙叉槑缁嗐€?/p>
+                </div>
+                <div id="historyHouseList" class="history-house-list"></div>
+            </div>
+
+            <p id="historyCurrentHint" class="history-current-hint hidden">閫夋嫨涓€鏍嬫埧灞嬪悗锛屽彲鍦ㄨ繖閲屾煡鐪嬪巻娆℃娴嬬粨鏋滃拰瓒嬪娍淇℃伅銆?/p>
+            <div id="historyOverview" class="dashboard-overview hidden"></div>
 
             <div id="trendSummaryCard" class="trend-card hidden">
                 <strong>趋势分析</strong>
                 <p id="trendSummaryText">至少需要两次检测后才能生成趋势分析。</p>
             </div>
-            <div id="historyList" class="history-list"></div>
+            <div id="historyList" class="history-list hidden"></div>
         </section>
 
-        <section id="surveyPanel" class="panel">
+        <section id="surveyPanel" class="panel panel-survey">
             <div class="panel-heading">
                 <div>
                     <p class="section-kicker">Step 6</p>
@@ -331,11 +535,26 @@
                 <button id="refreshSurveyButton" type="button" onclick="loadSurveySummary()">刷新汇总</button>
                 <a class="button-link compact-link" href="/survey/summary.csv" target="_blank" rel="noopener noreferrer">导出 CSV</a>
             </div>
-            <div id="surveySummaryCards" class="summary-grid"></div>
-            <div id="surveyRiskList" class="history-list"></div>
+            <div id="surveyInsights" class="dashboard-hero hidden"></div>
+            <div class="survey-layout">
+                <div class="survey-summary-board">
+                    <div class="section-subhead">
+                        <strong>平台风险概览</strong>
+                        <p>根据平台内已完成检测记录自动汇总。</p>
+                    </div>
+                    <div id="surveySummaryCards" class="summary-grid"></div>
+                </div>
+                <div class="survey-risk-board">
+                    <div class="section-subhead">
+                        <strong>重点风险房屋</strong>
+                        <p>按最新一次检测结果筛选的中高风险清单。</p>
+                    </div>
+                    <div id="surveyRiskList" class="history-list"></div>
+                </div>
+            </div>
         </section>
     </main>
 
-    <script src="{{ url_for('static', filename='script.js', v='20260415-task-flow-1') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v='20260422-dark-platform-4') }}"></script>
 </body>
 </html>

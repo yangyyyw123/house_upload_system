@@ -30,7 +30,10 @@ class TargetSpec:
     frame_padding_mm: float
     anchor_size_mm: float
     dpi: int
+    crack_size_category: str
+    crack_size_label: str
     recommended: bool = False
+    is_legacy: bool = False
 
     @property
     def frame_size_mm(self) -> float:
@@ -38,39 +41,100 @@ class TargetSpec:
 
 
 TARGET_SPECS: dict[str, TargetSpec] = {
-    "a4_qr80": TargetSpec(
-        key="a4_qr80",
-        label="A4 / 80mm 主靶标",
-        description="推荐。优先保证中景照片可识别，适合常规巡检与裂缝精细测量。",
+    "square_120": TargetSpec(
+        key="square_120",
+        label="120 × 120 mm 大靶标",
+        description="适合检测区域较大、裂缝较长或需要更远识别距离的场景。",
         page_width_mm=210.0,
         page_height_mm=297.0,
-        qr_size_mm=80.0,
+        qr_size_mm=96.0,
         frame_padding_mm=12.0,
         anchor_size_mm=12.0,
         dpi=300,
-        recommended=True,
+        crack_size_category="large",
+        crack_size_label="较大裂缝 / 大范围检测区",
     ),
-    "a4_qr60": TargetSpec(
-        key="a4_qr60",
-        label="A4 / 60mm 紧凑靶标",
-        description="适合打印空间受限的现场，但识别距离略短于 80mm 主靶标。",
+    "square_80": TargetSpec(
+        key="square_80",
+        label="80 × 80 mm 标准靶标",
+        description="默认推荐，适合常规检测区域和大多数墙体裂缝测量。",
         page_width_mm=210.0,
         page_height_mm=297.0,
         qr_size_mm=60.0,
         frame_padding_mm=10.0,
         anchor_size_mm=10.0,
         dpi=300,
+        crack_size_category="standard",
+        crack_size_label="常规裂缝 / 默认推荐",
+        recommended=True,
+    ),
+    "square_40": TargetSpec(
+        key="square_40",
+        label="40 × 40 mm 小靶标",
+        description="适合局部细裂缝和近距离拍摄，打印时建议保持原始比例。",
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        qr_size_mm=28.0,
+        frame_padding_mm=6.0,
+        anchor_size_mm=5.0,
+        dpi=600,
+        crack_size_category="fine",
+        crack_size_label="细裂缝 / 局部检测区",
+    ),
+    "square_20": TargetSpec(
+        key="square_20",
+        label="20 × 20 mm 微型靶标",
+        description="适合微细裂缝或张贴空间非常受限的部位，建议 600 DPI 打印并近距离正拍。",
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        qr_size_mm=14.0,
+        frame_padding_mm=3.0,
+        anchor_size_mm=3.0,
+        dpi=600,
+        crack_size_category="micro",
+        crack_size_label="微细裂缝 / 狭小张贴区",
+    ),
+    "a4_qr80": TargetSpec(
+        key="a4_qr80",
+        label="A4 / 80mm 主靶标（兼容）",
+        description="历史兼容规格，建议新项目改用按裂缝尺度选择的新尺寸靶标。",
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        qr_size_mm=80.0,
+        frame_padding_mm=12.0,
+        anchor_size_mm=12.0,
+        dpi=300,
+        crack_size_category="legacy",
+        crack_size_label="历史兼容规格",
+        is_legacy=True,
+    ),
+    "a4_qr60": TargetSpec(
+        key="a4_qr60",
+        label="A4 / 60mm 紧凑靶标（兼容）",
+        description="历史兼容规格，建议新项目改用按裂缝尺度选择的新尺寸靶标。",
+        page_width_mm=210.0,
+        page_height_mm=297.0,
+        qr_size_mm=60.0,
+        frame_padding_mm=10.0,
+        anchor_size_mm=10.0,
+        dpi=300,
+        crack_size_category="legacy",
+        crack_size_label="历史兼容规格",
+        is_legacy=True,
     ),
     "a5_qr60": TargetSpec(
         key="a5_qr60",
-        label="A5 / 60mm 便携靶标",
-        description="便于现场随身携带，建议贴近裂缝区域拍摄。",
+        label="A5 / 60mm 便携靶标（兼容）",
+        description="历史兼容规格，建议新项目改用按裂缝尺度选择的新尺寸靶标。",
         page_width_mm=148.0,
         page_height_mm=210.0,
         qr_size_mm=60.0,
         frame_padding_mm=9.0,
         anchor_size_mm=9.0,
         dpi=300,
+        crack_size_category="legacy",
+        crack_size_label="历史兼容规格",
+        is_legacy=True,
     ),
 }
 
@@ -80,20 +144,7 @@ class TargetGeneratorService:
         self.output_root = Path(output_root).resolve()
 
     def list_specs(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "key": spec.key,
-                "label": spec.label,
-                "description": spec.description,
-                "page_size_mm": [spec.page_width_mm, spec.page_height_mm],
-                "qr_size_mm": spec.qr_size_mm,
-                "frame_size_mm": spec.frame_size_mm,
-                "anchor_size_mm": spec.anchor_size_mm,
-                "dpi": spec.dpi,
-                "recommended": spec.recommended,
-            }
-            for spec in TARGET_SPECS.values()
-        ]
+        return [self._serialize_spec(spec) for spec in TARGET_SPECS.values() if not spec.is_legacy]
 
     def generate_target(
         self,
@@ -160,14 +211,7 @@ class TargetGeneratorService:
                     "payload": payload,
                     "qr_payload": qr_payload,
                     "spec": {
-                        "key": spec.key,
-                        "label": spec.label,
-                        "description": spec.description,
-                        "page_size_mm": [spec.page_width_mm, spec.page_height_mm],
-                        "qr_size_mm": spec.qr_size_mm,
-                        "frame_size_mm": spec.frame_size_mm,
-                        "anchor_size_mm": spec.anchor_size_mm,
-                        "dpi": spec.dpi,
+                        **self._serialize_spec(spec),
                     },
                     "files": {
                         "png": png_path.name,
@@ -184,21 +228,29 @@ class TargetGeneratorService:
             "target_id": target_id,
             "payload": payload,
             "qr_payload": qr_payload,
-            "spec": {
-                "key": spec.key,
-                "label": spec.label,
-                "description": spec.description,
-                "page_size_mm": [spec.page_width_mm, spec.page_height_mm],
-                "qr_size_mm": spec.qr_size_mm,
-                "frame_size_mm": spec.frame_size_mm,
-                "anchor_size_mm": spec.anchor_size_mm,
-                "dpi": spec.dpi,
-            },
+            "spec": self._serialize_spec(spec),
             "paths": {
                 "png": str(png_path),
                 "pdf": str(pdf_path),
                 "manifest": str(manifest_path),
             },
+        }
+
+    @staticmethod
+    def _serialize_spec(spec: TargetSpec) -> dict[str, Any]:
+        return {
+            "key": spec.key,
+            "label": spec.label,
+            "description": spec.description,
+            "page_size_mm": [spec.page_width_mm, spec.page_height_mm],
+            "qr_size_mm": spec.qr_size_mm,
+            "frame_size_mm": spec.frame_size_mm,
+            "target_size_mm": [spec.frame_size_mm, spec.frame_size_mm],
+            "anchor_size_mm": spec.anchor_size_mm,
+            "dpi": spec.dpi,
+            "crack_size_category": spec.crack_size_category,
+            "crack_size_label": spec.crack_size_label,
+            "recommended": spec.recommended,
         }
 
     def _build_qr_image(self, payload: str, spec: TargetSpec) -> Image.Image:
@@ -272,7 +324,7 @@ class TargetGeneratorService:
 
         draw.text(
             (frame_left, frame_bottom + self._mm_to_px(6.0, spec.dpi)),
-            f"QR 有效边长: {spec.qr_size_mm:.0f} mm    靶标外框: {spec.frame_size_mm:.0f} mm",
+            f"QR 有效边长: {spec.qr_size_mm:.0f} mm    靶标尺寸: {spec.frame_size_mm:.0f} × {spec.frame_size_mm:.0f} mm",
             fill="#173042",
             font=heading_font,
         )
@@ -283,6 +335,7 @@ class TargetGeneratorService:
             ("检测区域", inspection_region),
             ("场景类型", scene_type),
             ("靶标规格", spec.label),
+            ("适用裂缝", spec.crack_size_label),
             ("靶标编号", target_id),
             ("生成时间", created_at),
         ]

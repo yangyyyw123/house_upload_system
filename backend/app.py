@@ -1,6 +1,7 @@
 import csv
 import importlib.util
 import json
+import os
 import sys
 import textwrap
 import traceback
@@ -146,6 +147,36 @@ def get_runtime_dependency_status() -> dict[str, bool]:
     return {name: importlib.util.find_spec(module) is not None for name, module in modules.items()}
 
 
+def get_torch_runtime_details() -> list[str]:
+    if importlib.util.find_spec("torch") is None:
+        return []
+
+    try:
+        torch = importlib.import_module("torch")
+    except Exception as exc:  # pragma: no cover
+        return [f"Unable to inspect torch runtime: {exc}"]
+
+    details = [f"Torch version: {getattr(torch, '__version__', 'unknown')}"]
+    cuda_build = getattr(getattr(torch, "version", None), "cuda", None)
+    details.append(f"Torch CUDA build: {cuda_build or 'cpu-only'}")
+
+    try:
+        cuda_available = bool(torch.cuda.is_available())
+    except Exception as exc:  # pragma: no cover
+        details.append(f"Torch CUDA availability check failed: {exc}")
+        return details
+
+    details.append(f"Torch CUDA available: {cuda_available}")
+    if cuda_available:
+        try:
+            details.append(f"Torch GPU count: {torch.cuda.device_count()}")
+            details.append(f"Torch GPU 0: {torch.cuda.get_device_name(0)}")
+        except Exception as exc:  # pragma: no cover
+            details.append(f"Torch GPU query failed: {exc}")
+
+    return details
+
+
 def format_inference_error(exc: Exception) -> str:
     base_message = str(exc)
     dependency_status = get_runtime_dependency_status()
@@ -155,10 +186,13 @@ def format_inference_error(exc: Exception) -> str:
         base_message,
         f"Current Python: {sys.executable}",
         f"Python version: {sys.version.split()[0]}",
+        f"INFERENCE_DEVICE: {getattr(segmentation_service, 'device_preference', 'auto')}",
     ]
 
     if missing_dependencies:
         details.append("Missing modules in current environment: " + ", ".join(missing_dependencies))
+
+    details.extend(get_torch_runtime_details())
 
     if PREFERRED_PYTHON.exists() and Path(sys.executable).resolve() != PREFERRED_PYTHON.resolve():
         details.append(f"Start the backend with: {PREFERRED_PYTHON} backend\\app.py")
@@ -2255,6 +2289,7 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
     completed_records = [record for record in records if record.analysis_status == "completed"]
     risk_distribution = {"无风险": 0, "低风险": 0, "中风险": 0, "高风险": 0}
     houses_with_records = {record.house_id for record in completed_records if record.house_id}
+    history_count_by_house: dict[int, int] = {}
 
     latest_by_house: dict[int, ImageSegmentationRecord] = {}
     for record in completed_records:
@@ -2262,12 +2297,32 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
             risk_distribution[record.risk_level] += 1
         if not record.house_id:
             continue
+        history_count_by_house[record.house_id] = history_count_by_house.get(record.house_id, 0) + 1
         existing = latest_by_house.get(record.house_id)
         if existing is None or (record.created_at, record.id) > (existing.created_at, existing.id):
             latest_by_house[record.house_id] = record
 
     high_risk_houses: list[dict[str, object]] = []
+    houses_with_history: list[dict[str, object]] = []
     for house_id, record in latest_by_house.items():
+        house = db.session.get(HouseInfo, house_id)
+        houses_with_history.append(
+            {
+                "house_id": house_id,
+                "house_number": house.house_number if house else f"HOUSE-{house_id}",
+                "history_count": history_count_by_house.get(house_id, 0),
+                "latest_detection_code": record.detection_code,
+                "latest_report_url": url_for("download_detection_report", record_id=record.id),
+                "latest_report_view_url": url_for("download_detection_report", record_id=record.id, download=0),
+                "latest_bundle_report_url": url_for("download_bundle_report", bundle_code=record.upload_bundle_code)
+                if record.upload_bundle_code
+                else None,
+                "latest_component_type": record.component_type,
+                "latest_scenario_type": record.scenario_type,
+                "latest_risk_level": record.risk_level,
+                "latest_created_at": record.created_at.isoformat() if record.created_at else None,
+            }
+        )
         if record.risk_level not in {"中风险", "高风险"}:
             continue
         house = db.session.get(HouseInfo, house_id)
@@ -2293,12 +2348,21 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
         )
     )
 
+    houses_with_history.sort(
+        key=lambda item: (
+            item["latest_created_at"] or "",
+            item["house_id"],
+        ),
+        reverse=True,
+    )
+
     return {
         "total_records": len(records),
         "completed_records": len(completed_records),
         "house_count": len(houses_with_records),
         "risk_distribution": risk_distribution,
         "high_risk_houses": high_risk_houses[:20],
+        "houses_with_history": houses_with_history,
     }
 
 
@@ -2885,7 +2949,7 @@ def generate_target():
     house_number = clean_text(data.get("house_number"))
     inspection_region = clean_text(data.get("inspection_region"))
     scene_type = clean_text(data.get("scene_type"))
-    spec_key = clean_text(data.get("spec_key"), "a4_qr80")
+    spec_key = clean_text(data.get("spec_key"), "square_80")
 
     if not house_number:
         return jsonify({"message": "house_number 不能为空"}), 400
@@ -3072,6 +3136,8 @@ def download_detection_report(record_id: int):
     if record is None:
         return jsonify({"message": "Detection record not found"}), 404
 
+    download = request.args.get("download", "1").strip().lower() not in {"0", "false", "no", "inline"}
+
     house = db.session.get(HouseInfo, record.house_id) if record.house_id else None
     records = (
         ImageSegmentationRecord.query.filter_by(house_id=record.house_id)
@@ -3087,7 +3153,7 @@ def download_detection_report(record_id: int):
     return send_file(
         pdf_buffer,
         mimetype="application/pdf",
-        as_attachment=True,
+        as_attachment=download,
         download_name=filename,
     )
 
@@ -3098,6 +3164,8 @@ def download_bundle_report(bundle_code: str):
     if not records:
         return jsonify({"message": "Batch report not found"}), 404
 
+    download = request.args.get("download", "1").strip().lower() not in {"0", "false", "no", "inline"}
+
     first_record = records[0]
     house = db.session.get(HouseInfo, first_record.house_id) if first_record.house_id else None
     pdf_buffer = build_bundle_report_pdf(records, house, bundle_code)
@@ -3105,7 +3173,7 @@ def download_bundle_report(bundle_code: str):
     return send_file(
         pdf_buffer,
         mimetype="application/pdf",
-        as_attachment=True,
+        as_attachment=download,
         download_name=filename,
     )
 
@@ -3255,4 +3323,6 @@ if __name__ == "__main__":
     ensure_database_tables()
     ensure_sqlite_columns()
     recover_incomplete_detection_tasks()
-    app.run(debug=False, use_reloader=False)
+    host = os.getenv("HOUSE_UPLOAD_HOST", "0.0.0.0")
+    port = int(os.getenv("HOUSE_UPLOAD_PORT", "5000"))
+    app.run(host=host, port=port, debug=False, use_reloader=False)

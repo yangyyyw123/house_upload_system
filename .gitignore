@@ -24,6 +24,9 @@ Thumbs.db
 # Local databases and runtime state
 instance/
 backend/instance/
+backend/backend.pid
+backend/backend_stdout.log
+backend/backend_stderr.log
 *.db
 *.sqlite3
 
