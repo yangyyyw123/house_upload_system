@@ -6,10 +6,11 @@ import sys
 import textwrap
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import cv2
 import numpy as np
@@ -68,6 +69,7 @@ quantification_service = CrackQuantificationService()
 target_generator_service = TargetGeneratorService(TARGET_ROOT)
 task_executor = ThreadPoolExecutor(max_workers=1)
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
+APP_TIMEZONE = ZoneInfo(os.environ.get("APP_TIMEZONE", "Asia/Shanghai"))
 
 QUALITY_GUIDANCE = {
     "good": "图像质量通过，可继续自动分析。",
@@ -1250,15 +1252,68 @@ def get_house_history_records(house_id: int | None, limit: int = 5) -> list["Ima
     )
 
 
-def format_datetime_value(value: datetime | None, include_seconds: bool = True) -> str:
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
+def to_local_datetime(value: datetime | None) -> datetime | None:
     if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(APP_TIMEZONE)
+
+
+def to_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def serialize_datetime_value(value: datetime | None) -> str | None:
+    utc_value = to_utc_datetime(value)
+    if utc_value is None:
+        return None
+    return utc_value.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def format_datetime_value(value: datetime | None, include_seconds: bool = True) -> str:
+    local_value = to_local_datetime(value)
+    if local_value is None:
         return "-"
-    return value.strftime("%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M")
+    return local_value.strftime("%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M")
+
+
+def get_record_uploaded_at(record: "ImageSegmentationRecord") -> datetime | None:
+    return record.uploaded_at or record.created_at
+
+
+def get_record_generated_at(record: "ImageSegmentationRecord") -> datetime | None:
+    return record.created_at
+
+
+def get_bundle_uploaded_at(records: list["ImageSegmentationRecord"]) -> datetime | None:
+    timestamps = [get_record_uploaded_at(record) for record in records if get_record_uploaded_at(record)]
+    return min(timestamps) if timestamps else None
+
+
+def get_bundle_generated_at(records: list["ImageSegmentationRecord"]) -> datetime | None:
+    timestamps = [get_record_generated_at(record) for record in records if get_record_generated_at(record)]
+    return max(timestamps) if timestamps else None
 
 
 def format_report_timestamp(record: "ImageSegmentationRecord", include_seconds: bool = False) -> str:
     if record.created_at:
         return format_datetime_value(record.created_at, include_seconds=include_seconds)
+    return f"记录 {record.id}"
+
+
+def format_uploaded_timestamp(record: "ImageSegmentationRecord", include_seconds: bool = False) -> str:
+    uploaded_at = get_record_uploaded_at(record)
+    if uploaded_at:
+        return format_datetime_value(uploaded_at, include_seconds=include_seconds)
     return f"记录 {record.id}"
 
 
@@ -1517,7 +1572,7 @@ def build_report_pages(
     record: "ImageSegmentationRecord",
     house: "HouseInfo | None",
     trend_summary: dict[str, object],
-    generated_at: datetime,
+    generated_at: datetime | None,
 ) -> list[Image.Image]:
     history_records = get_house_history_records(record.house_id, limit=5) if record.house_id else []
     risk_assessment = build_risk_assessment_for_record(record)
@@ -1534,8 +1589,8 @@ def build_report_pages(
         [
             ("检测编号", record.detection_code or "-"),
             ("房屋编号", house.house_number if house else "未绑定"),
-            ("检测时间", format_report_timestamp(record, include_seconds=True)),
-            ("报告时间", format_datetime_value(generated_at)),
+            ("上传时间", format_uploaded_timestamp(record, include_seconds=True)),
+            ("生成时间", format_datetime_value(generated_at)),
             ("房屋类型", house.house_type if house and house.house_type else "未标注"),
             ("裂缝位置", house.crack_location if house and house.crack_location else "未标注"),
             ("检测任务", house.detection_type if house and house.detection_type else "未标注"),
@@ -1614,7 +1669,7 @@ def build_report_pages(
     for row in history_records:
         values = [
             row.detection_code or "-",
-            row.created_at.isoformat(timespec="seconds") if row.created_at else "-",
+            format_report_timestamp(row, include_seconds=True),
             row.risk_level or "-",
             f"{row.crack_area_ratio or 0:.6f}",
             f"{row.quality_status or '-'} / {row.quality_score or '-'}",
@@ -1646,7 +1701,7 @@ def build_report_pages(
 
 
 def build_report_pdf(record: "ImageSegmentationRecord", house: "HouseInfo | None", trend_summary: dict[str, object]) -> BytesIO:
-    pages = build_report_pages(record, house, trend_summary, datetime.now().astimezone())
+    pages = build_report_pages(record, house, trend_summary, get_record_generated_at(record))
     buffer = BytesIO()
     rgb_pages = [page.convert("RGB") for page in pages]
     rgb_pages[0].save(buffer, format="PDF", save_all=True, append_images=rgb_pages[1:])
@@ -1658,7 +1713,7 @@ def _legacy_build_bundle_summary_page(
     records: list["ImageSegmentationRecord"],
     house: "HouseInfo | None",
     bundle_code: str,
-    generated_at: datetime,
+    generated_at: datetime | None,
 ) -> Image.Image:
     page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page)
@@ -1671,7 +1726,8 @@ def _legacy_build_bundle_summary_page(
         [
             ("批次编号", bundle_code),
             ("房屋编号", house.house_number if house else "未绑定"),
-            ("导出时间", format_datetime_value(generated_at)),
+            ("上传时间", format_datetime_value(get_bundle_uploaded_at(records))),
+            ("生成时间", format_datetime_value(generated_at)),
             ("记录数量", str(len(records))),
             ("检测任务", house.detection_type if house and house.detection_type else "未标注"),
             ("房屋类型", house.house_type if house and house.house_type else "未标注"),
@@ -1685,7 +1741,7 @@ def _legacy_build_bundle_summary_page(
     header_font = load_report_font(22, bold=True)
     cell_font = load_report_font(20)
     table_y = current_y + 10
-    headers = ["尺度", "检测编号", "检测时间", "风险", "最大宽度", "裂缝长度"]
+    headers = ["尺度", "检测编号", "生成时间", "风险", "最大宽度", "裂缝长度"]
     widths = [110, 250, 240, 120, 180, 180]
     start_x = REPORT_MARGIN + 12
     x = start_x
@@ -1729,7 +1785,7 @@ def _legacy_build_bundle_summary_page(
 def _legacy_build_bundle_record_page(
     record: "ImageSegmentationRecord",
     page_index: int,
-    generated_at: datetime,
+    generated_at: datetime | None,
 ) -> Image.Image:
     page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page)
@@ -1742,8 +1798,8 @@ def _legacy_build_bundle_record_page(
         draw,
         [
             ("检测编号", record.detection_code or "-"),
-            ("检测时间", format_report_timestamp(record, include_seconds=True)),
-            ("导出时间", format_datetime_value(generated_at)),
+            ("上传时间", format_uploaded_timestamp(record, include_seconds=True)),
+            ("生成时间", format_report_timestamp(record, include_seconds=True)),
             ("风险等级", record.risk_level or "-"),
             ("最大宽度", format_metric_value(record.max_width_mm, record.max_width_px)),
             ("裂缝长度", format_metric_value(record.crack_length_mm, record.crack_length_px)),
@@ -1790,7 +1846,7 @@ def build_bundle_summary_page(
     records: list["ImageSegmentationRecord"],
     house: "HouseInfo | None",
     bundle_code: str,
-    generated_at: datetime,
+    generated_at: datetime | None,
 ) -> Image.Image:
     page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page)
@@ -1803,7 +1859,8 @@ def build_bundle_summary_page(
         [
             ("批次编号", bundle_code),
             ("房屋编号", house.house_number if house else "未绑定"),
-            ("导出时间", format_datetime_value(generated_at)),
+            ("上传时间", format_datetime_value(get_bundle_uploaded_at(records))),
+            ("生成时间", format_datetime_value(generated_at)),
             ("记录数量", str(len(records))),
             ("检测任务", house.detection_type if house and house.detection_type else "未标注"),
             ("房屋类型", house.house_type if house and house.house_type else "未标注"),
@@ -1817,7 +1874,7 @@ def build_bundle_summary_page(
     header_font = load_report_font(22, bold=True)
     cell_font = load_report_font(20)
     table_y = current_y + 10
-    headers = ["尺度", "检测编号", "检测时间", "风险", "最大宽度", "裂缝长度"]
+    headers = ["尺度", "检测编号", "生成时间", "风险", "最大宽度", "裂缝长度"]
     widths = [110, 250, 240, 120, 180, 180]
     start_x = REPORT_MARGIN + 12
     x = start_x
@@ -1860,7 +1917,7 @@ def build_bundle_summary_page(
 
 def build_bundle_projection_page(
     bundle_projection: dict[str, object],
-    generated_at: datetime,
+    generated_at: datetime | None,
     page_index: int,
 ) -> Image.Image:
     page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
@@ -1873,7 +1930,7 @@ def build_bundle_projection_page(
     current_y = add_key_value_block(
         draw,
         [
-            ("生成时间", format_datetime_value(generated_at)),
+            ("结果生成时间", format_datetime_value(generated_at)),
             ("回投状态", "已生成" if bundle_projection.get("status") == "completed" else "未生成"),
             ("回投尺度", "、".join(item["capture_scale"] for item in bundle_projection.get("projected_items", [])) or "-"),
             (
@@ -1929,7 +1986,7 @@ def build_bundle_projection_page(
 def build_bundle_record_page(
     record: "ImageSegmentationRecord",
     page_index: int,
-    generated_at: datetime,
+    generated_at: datetime | None,
 ) -> Image.Image:
     page = Image.new("RGB", REPORT_PAGE_SIZE, "white")
     draw = ImageDraw.Draw(page)
@@ -1942,8 +1999,8 @@ def build_bundle_record_page(
         draw,
         [
             ("检测编号", record.detection_code or "-"),
-            ("检测时间", format_report_timestamp(record, include_seconds=True)),
-            ("导出时间", format_datetime_value(generated_at)),
+            ("上传时间", format_uploaded_timestamp(record, include_seconds=True)),
+            ("生成时间", format_report_timestamp(record, include_seconds=True)),
             ("风险等级", record.risk_level or "-"),
             ("最大宽度", format_metric_value(record.max_width_mm, record.max_width_px)),
             ("裂缝长度", format_metric_value(record.crack_length_mm, record.crack_length_px)),
@@ -1991,7 +2048,7 @@ def build_bundle_report_pdf(
     house: "HouseInfo | None",
     bundle_code: str,
 ) -> BytesIO:
-    generated_at = datetime.now().astimezone()
+    generated_at = get_bundle_generated_at(records)
     pages: list[Image.Image] = [build_bundle_summary_page(records, house, bundle_code, generated_at)]
     try:
         bundle_projection = build_bundle_projection_from_records(records, bundle_code)
@@ -2090,6 +2147,7 @@ class ImageSegmentationRecord(db.Model):
     analysis_status = db.Column(db.String(20), default="completed")
     original_filename = db.Column(db.String(255), nullable=False)
     source_image_path = db.Column(db.String(500), nullable=False)
+    uploaded_at = db.Column(db.DateTime)
     mask_path = db.Column(db.String(500))
     overlay_path = db.Column(db.String(500))
     crack_pixel_count = db.Column(db.Integer)
@@ -2137,6 +2195,7 @@ def ensure_sqlite_columns() -> None:
         "image_segmentation_record": {
             "detection_code": "TEXT",
             "upload_bundle_code": "TEXT",
+            "uploaded_at": "DATETIME",
             "analysis_status": "TEXT DEFAULT 'completed'",
             "capture_scale": "TEXT",
             "component_type": "TEXT",
@@ -2200,6 +2259,28 @@ def ensure_sqlite_columns() -> None:
                 WHERE analysis_status IS NULL OR analysis_status = ''
                 """
             )
+            connection.exec_driver_sql(
+                """
+                UPDATE image_segmentation_record
+                SET uploaded_at = (
+                    SELECT detection_task.created_at
+                    FROM detection_task
+                    WHERE detection_task.bundle_code = image_segmentation_record.upload_bundle_code
+                    ORDER BY detection_task.created_at ASC, detection_task.id ASC
+                    LIMIT 1
+                )
+                WHERE uploaded_at IS NULL
+                  AND upload_bundle_code IS NOT NULL
+                  AND upload_bundle_code <> ''
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                UPDATE image_segmentation_record
+                SET uploaded_at = COALESCE(uploaded_at, created_at)
+                WHERE uploaded_at IS NULL
+                """
+            )
 
 
 def serialize_segmentation_record(
@@ -2249,6 +2330,8 @@ def serialize_segmentation_record(
     }
     if risk_assessment is None:
         risk_assessment = build_risk_assessment_for_record(record, previous_record=previous_record)
+    uploaded_at = get_record_uploaded_at(record)
+    generated_at = get_record_generated_at(record)
     return {
         "id": record.id,
         "house_id": record.house_id,
@@ -2281,7 +2364,12 @@ def serialize_segmentation_record(
         "marker_detection": marker_detection,
         "quantification": quantification,
         "analysis_stages": build_analysis_stages(marker_detection, quantification),
-        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "uploaded_at": serialize_datetime_value(uploaded_at),
+        "uploaded_at_display": format_datetime_value(uploaded_at),
+        "generated_at": serialize_datetime_value(generated_at),
+        "generated_at_display": format_datetime_value(generated_at),
+        "created_at": serialize_datetime_value(record.created_at),
+        "created_at_display": format_datetime_value(record.created_at),
     }
 
 
@@ -2320,7 +2408,12 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
                 "latest_component_type": record.component_type,
                 "latest_scenario_type": record.scenario_type,
                 "latest_risk_level": record.risk_level,
-                "latest_created_at": record.created_at.isoformat() if record.created_at else None,
+                "latest_created_at": serialize_datetime_value(record.created_at),
+                "latest_created_at_display": format_datetime_value(record.created_at),
+                "latest_uploaded_at": serialize_datetime_value(get_record_uploaded_at(record)),
+                "latest_uploaded_at_display": format_datetime_value(get_record_uploaded_at(record)),
+                "latest_generated_at": serialize_datetime_value(get_record_generated_at(record)),
+                "latest_generated_at_display": format_datetime_value(get_record_generated_at(record)),
             }
         )
         if record.risk_level not in {"中风险", "高风险"}:
@@ -2336,7 +2429,12 @@ def build_survey_summary(records: list["ImageSegmentationRecord"]) -> dict[str, 
                 "component_type": record.component_type,
                 "scenario_type": record.scenario_type,
                 "detection_code": record.detection_code,
-                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "created_at": serialize_datetime_value(record.created_at),
+                "created_at_display": format_datetime_value(record.created_at),
+                "uploaded_at": serialize_datetime_value(get_record_uploaded_at(record)),
+                "uploaded_at_display": format_datetime_value(get_record_uploaded_at(record)),
+                "generated_at": serialize_datetime_value(get_record_generated_at(record)),
+                "generated_at_display": format_datetime_value(get_record_generated_at(record)),
             }
         )
 
@@ -2388,9 +2486,16 @@ def serialize_detection_task(task: "DetectionTask", include_results: bool | None
         "total_items": task.total_items,
         "processed_items": task.processed_items,
         "progress_percent": progress_percent,
-        "created_at": task.created_at.isoformat() if task.created_at else None,
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+        "uploaded_at": serialize_datetime_value(task.created_at),
+        "uploaded_at_display": format_datetime_value(task.created_at),
+        "generated_at": serialize_datetime_value(task.completed_at),
+        "generated_at_display": format_datetime_value(task.completed_at),
+        "created_at": serialize_datetime_value(task.created_at),
+        "created_at_display": format_datetime_value(task.created_at),
+        "started_at": serialize_datetime_value(task.started_at),
+        "started_at_display": format_datetime_value(task.started_at),
+        "completed_at": serialize_datetime_value(task.completed_at),
+        "completed_at_display": format_datetime_value(task.completed_at),
         "result_status_code": task.result_status_code,
         "has_errors": task.status == "failed" or task.result_status_code not in (None, 200),
         "error_detail": task.error_detail,
@@ -2399,6 +2504,11 @@ def serialize_detection_task(task: "DetectionTask", include_results: bool | None
     }
 
     if include_results:
+        for result in results:
+            result.setdefault("uploaded_at", serialize_datetime_value(task.created_at))
+            result.setdefault("uploaded_at_display", format_datetime_value(task.created_at))
+            result.setdefault("generated_at", result.get("created_at") or serialize_datetime_value(task.completed_at))
+            result.setdefault("generated_at_display", result.get("created_at_display") or format_datetime_value(task.completed_at))
         payload["results"] = results
         payload["bundle_projection"] = bundle_projection or build_bundle_projection_unavailable("Projection not ready.")
         payload["bundle_report_url"] = (
@@ -2433,7 +2543,7 @@ def run_detection_task(task_id: int) -> None:
                 house = db.session.get(HouseInfo, task.house_id) if task.house_id else None
 
                 task.status = "running"
-                task.started_at = task.started_at or datetime.utcnow()
+                task.started_at = task.started_at or utc_now()
                 task.status_message = "Analysis is running."
                 db.session.commit()
 
@@ -2450,6 +2560,7 @@ def run_detection_task(task_id: int) -> None:
                         allow_low_quality=True,
                         run_segmentation=bool(task.run_segmentation),
                         bundle_code=task.bundle_code,
+                        uploaded_at=task.created_at,
                     )
                     result_payload["capture_scale"] = capture_scale
                     results.append(result_payload)
@@ -2472,7 +2583,7 @@ def run_detection_task(task_id: int) -> None:
                 task.result_status_code = status_code
                 task.status = "completed"
                 task.status_message = "Analysis completed." if status_code == 200 else "Analysis completed with errors."
-                task.completed_at = datetime.utcnow()
+                task.completed_at = utc_now()
                 db.session.commit()
         except Exception:  # pragma: no cover
             task = db.session.get(DetectionTask, task_id)
@@ -2483,7 +2594,7 @@ def run_detection_task(task_id: int) -> None:
                 task.results_json = encode_json(results)
                 task.result_status_code = status_code if status_code != 200 else 500
                 task.error_detail = traceback.format_exc()
-                task.completed_at = datetime.utcnow()
+                task.completed_at = utc_now()
                 db.session.commit()
         finally:
             db.session.remove()
@@ -2495,7 +2606,7 @@ def recover_incomplete_detection_tasks() -> None:
         if not stale_tasks:
             return
 
-        recovered_at = datetime.utcnow()
+        recovered_at = utc_now()
         for task in stale_tasks:
             task.status = "failed"
             task.status_message = "Task interrupted before completion."
@@ -2548,7 +2659,9 @@ def process_saved_image(
     allow_low_quality: bool,
     run_segmentation: bool,
     bundle_code: str | None = None,
+    uploaded_at: datetime | None = None,
 ) -> tuple[dict[str, object], int]:
+    uploaded_at = uploaded_at or utc_now()
     quality_report = analyze_image_quality(saved_path)
 
     if quality_report["status"] == "reject" and not allow_low_quality:
@@ -2559,6 +2672,8 @@ def process_saved_image(
                 "original_filename": original_name,
                 "capture_scale": metadata["capture_scale"],
                 "quality_report": serialize_quality_report(quality_report),
+                "uploaded_at": serialize_datetime_value(uploaded_at),
+                "uploaded_at_display": format_datetime_value(uploaded_at),
             },
             422,
         )
@@ -2575,6 +2690,8 @@ def process_saved_image(
         "detection_code": detection_code,
         "metadata": metadata,
         "quality_report": serialize_quality_report(quality_report),
+        "uploaded_at": serialize_datetime_value(uploaded_at),
+        "uploaded_at_display": format_datetime_value(uploaded_at),
     }
 
     if not run_segmentation:
@@ -2631,6 +2748,7 @@ def process_saved_image(
         response_payload["quantification"],
     )
 
+    generated_at = utc_now()
     record = ImageSegmentationRecord(
         house_id=house.id if house else None,
         upload_bundle_code=bundle_code,
@@ -2638,6 +2756,7 @@ def process_saved_image(
         analysis_status="completed",
         original_filename=original_name,
         source_image_path=str(saved_path),
+        uploaded_at=uploaded_at,
         mask_path=segmentation_result["mask_path"],
         overlay_path=segmentation_result["overlay_path"],
         crack_pixel_count=segmentation_result["crack_pixel_count"],
@@ -2672,11 +2791,16 @@ def process_saved_image(
         crack_length_mm=quantification.get("crack_length_mm"),
         quant_overlay_path=quantification.get("quant_overlay_path"),
         width_chart_path=quantification.get("width_chart_path"),
+        created_at=generated_at,
     )
     db.session.add(record)
     db.session.commit()
     response_payload["segmentation_record_id"] = record.id
     response_payload["report_url"] = url_for("download_detection_report", record_id=record.id)
+    response_payload["generated_at"] = serialize_datetime_value(generated_at)
+    response_payload["generated_at_display"] = format_datetime_value(generated_at)
+    response_payload["created_at"] = serialize_datetime_value(generated_at)
+    response_payload["created_at_display"] = format_datetime_value(generated_at)
     return response_payload, 200
 
 
@@ -2699,6 +2823,7 @@ def upload_file():
         return jsonify(error[0]), error[1]
 
     ensure_runtime_directories()
+    uploaded_at = utc_now()
     original_name, saved_path = save_uploaded_file(file)
     response_payload, status_code = process_saved_image(
         saved_path=saved_path,
@@ -2707,6 +2832,7 @@ def upload_file():
         metadata=metadata,
         allow_low_quality=allow_low_quality,
         run_segmentation=run_segmentation,
+        uploaded_at=uploaded_at,
     )
     return jsonify(response_payload), status_code
 
@@ -2714,6 +2840,7 @@ def upload_file():
 @app.route("/upload-batch", methods=["POST"])
 def upload_batch():
     ensure_runtime_directories()
+    uploaded_at = utc_now()
     allow_low_quality = request.form.get("allow_low_quality", "false").lower() == "true"
     run_segmentation = request.form.get("run_segmentation", "true").lower() != "false"
     base_metadata = collect_upload_metadata(request.form)
@@ -2783,6 +2910,7 @@ def upload_batch():
             allow_low_quality=True,
             run_segmentation=run_segmentation,
             bundle_code=bundle_code,
+            uploaded_at=uploaded_at,
         )
         result_payload["capture_scale"] = item["capture_scale"]
         results.append(result_payload)
@@ -2793,6 +2921,16 @@ def upload_batch():
         bundle_projection = build_bundle_projection_from_results(results, bundle_code)
     except Exception as exc:  # pragma: no cover
         bundle_projection = build_bundle_projection_unavailable(f"长景回投生成失败：{exc}")
+    generated_records = [
+        record
+        for record in (
+            db.session.get(ImageSegmentationRecord, result_payload.get("segmentation_record_id"))
+            for result_payload in results
+            if result_payload.get("segmentation_record_id")
+        )
+        if record is not None
+    ]
+    generated_at = get_bundle_generated_at(generated_records)
 
     return (
         jsonify(
@@ -2800,6 +2938,10 @@ def upload_batch():
                 "message": "三张图像已完成批量处理。" if status_code == 200 else "三张图像已上传，但部分分析失败。",
                 "house_id": house.id if house else None,
                 "bundle_code": bundle_code,
+                "uploaded_at": serialize_datetime_value(uploaded_at),
+                "uploaded_at_display": format_datetime_value(uploaded_at),
+                "generated_at": serialize_datetime_value(generated_at),
+                "generated_at_display": format_datetime_value(generated_at),
                 "bundle_report_url": url_for("download_bundle_report", bundle_code=bundle_code),
                 "bundle_projection": bundle_projection,
                 "results": results,
@@ -2812,6 +2954,7 @@ def upload_batch():
 @app.route("/tasks/upload-batch", methods=["POST"])
 def create_detection_task():
     ensure_runtime_directories()
+    uploaded_at = utc_now()
     allow_low_quality = request.form.get("allow_low_quality", "false").lower() == "true"
     run_segmentation = request.form.get("run_segmentation", "true").lower() != "false"
     base_metadata = collect_upload_metadata(request.form)
@@ -2903,6 +3046,7 @@ def create_detection_task():
             ]
         ),
         results_json=encode_json([]),
+        created_at=uploaded_at,
     )
     db.session.add(task)
     db.session.commit()

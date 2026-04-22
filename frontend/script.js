@@ -381,6 +381,14 @@ function getTaskStatusClass(task) {
     return "task-status-idle";
 }
 
+function getUploadedTimeText(item, fallback = "未知时间") {
+    return item?.uploaded_at_display || item?.uploaded_at || item?.created_at_display || item?.created_at || fallback;
+}
+
+function getGeneratedTimeText(item, fallback = "未知时间") {
+    return item?.generated_at_display || item?.created_at_display || item?.generated_at || item?.created_at || fallback;
+}
+
 function renderDetectionTaskStatus(task) {
     const panel = document.getElementById("taskStatusPanel");
     panel.className = `task-status-panel ${getTaskStatusClass(task)}`;
@@ -391,7 +399,8 @@ function renderDetectionTaskStatus(task) {
     document.getElementById("taskStatusProgress").textContent =
         task?.total_items ? `${task.processed_items || 0}/${task.total_items} (${task.progress_percent || 0}%)` : "-";
     document.getElementById("taskStatusPhase").textContent = formatTaskPhase(task?.status);
-    document.getElementById("taskStatusTime").textContent = task?.completed_at || task?.started_at || task?.created_at || "-";
+    document.getElementById("taskStatusTime").textContent =
+        task?.completed_at_display || task?.started_at_display || task?.uploaded_at_display || "-";
     document.getElementById("taskStatusError").textContent = task?.error_detail || "";
     setVisible("taskStatusPanel", true);
 }
@@ -714,6 +723,39 @@ function renderTargetResult(payload) {
         </div>
     `;
     setVisible("targetResult", true);
+}
+
+function arrangeSplitPreviewWorkspace() {
+    const uploadMainColumn = document.querySelector(".upload-main-column");
+    const uploadSideColumn = document.querySelector(".upload-side-column");
+    const uploadPreviewStack = document.getElementById("uploadPreviewStack");
+    const uploadHeroCard = document.querySelector("#uploadForm > .upload-hero-card");
+
+    if (uploadMainColumn && uploadHeroCard) {
+        uploadMainColumn.insertBefore(uploadHeroCard, uploadMainColumn.firstElementChild);
+    }
+
+    if (uploadPreviewStack) {
+        ["long_view_preview_card", "medium_view_preview_card", "close_view_preview_card"].forEach((cardId) => {
+            const card = document.getElementById(cardId);
+            if (card && card.parentElement !== uploadPreviewStack) {
+                uploadPreviewStack.appendChild(card);
+            }
+        });
+    }
+
+    if (uploadMainColumn) {
+        [
+            document.querySelector(".task-query-panel-track"),
+            document.getElementById("taskStatusPanel"),
+            document.querySelector(".task-guide-card-track"),
+        ].forEach((panel) => {
+            if (panel && panel.parentElement !== uploadMainColumn) {
+                uploadMainColumn.appendChild(panel);
+            }
+        });
+    }
+
 }
 
 async function generateTarget() {
@@ -1104,6 +1146,12 @@ function renderBatchResultOverview(payload) {
             detail: reportReady === "已生成" ? "可直接下载三景总报告" : "等待批次处理完成",
             toneClass: reportReady === "已生成" ? "tone-safe" : "tone-warning",
         },
+        {
+            title: "上传时间",
+            value: payload.uploaded_at_display || "-",
+            detail: payload.generated_at_display ? `结果生成 ${payload.generated_at_display}` : "等待结果生成",
+            toneClass: payload.generated_at_display ? "tone-safe" : "tone-neutral",
+        },
     ]);
 }
 
@@ -1134,7 +1182,7 @@ function renderHistoryOverview(records) {
         {
             title: "最新风险",
             value: latestRiskLevel,
-            detail: latestRecord.created_at || "未知时间",
+            detail: getGeneratedTimeText(latestRecord),
             toneClass: getRiskToneClass(latestRiskLevel),
         },
         {
@@ -1283,7 +1331,7 @@ function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
                                 <em>\u6700\u65b0\u98ce\u9669</em>
                                 <strong>${escapeHtml(item.latest_risk_level || "-")}</strong>
                             </span>
-                            <span class="history-time">${escapeHtml(item.latest_created_at || "\u672a\u77e5\u65f6\u95f4")}</span>
+                            <span class="history-time">${escapeHtml(item.latest_generated_at_display || item.latest_created_at_display || "\u672a\u77e5\u65f6\u95f4")}</span>
                         </div>
                     </div>
                     ${buildMetaChipGroup([
@@ -1497,6 +1545,38 @@ function buildQuantificationTable(markerDetection = {}, quantification = {}) {
     `;
 }
 
+function buildResultStatTable(items = []) {
+    const rows = items
+        .filter((item) => item && item.label && item.value !== null && item.value !== undefined && item.value !== "")
+        .map(
+            (item) => `
+                <div>
+                    <dt>${escapeHtml(item.label)}</dt>
+                    <dd>${escapeHtml(item.value)}</dd>
+                </div>
+            `
+        )
+        .join("");
+
+    return rows ? `<dl class="result-stat-table">${rows}</dl>` : "";
+}
+
+function buildResultNoteTable(items = []) {
+    const rows = items
+        .filter((item) => item && item.label && item.value !== null && item.value !== undefined && item.value !== "")
+        .map(
+            (item) => `
+                <div>
+                    <dt>${escapeHtml(item.label)}</dt>
+                    <dd>${escapeHtml(item.value)}</dd>
+                </div>
+            `
+        )
+        .join("");
+
+    return rows ? `<dl class="result-note-table">${rows}</dl>` : "";
+}
+
 function buildResultMediaCard(title, url, emptyText) {
     return `
         <article class="result-card">
@@ -1526,6 +1606,30 @@ function buildResultCard(item) {
     const reportLink = item.report_url
         ? `<a class="button-link compact-link" href="${escapeHtml(item.report_url)}" target="_blank" rel="noopener noreferrer">下载报告</a>`
         : "";
+    const resultStats = buildResultStatTable([
+        { label: "上传时间", value: getUploadedTimeText(item) },
+        { label: "生成时间", value: getGeneratedTimeText(item) },
+        { label: "质量分", value: quality.score ?? "-" },
+        { label: "风险评分", value: formatRiskScore(risk) },
+        { label: "最大宽度", value: formatMetricValue(quantification.max_width_mm, quantification.max_width_px) },
+        { label: "裂缝长度", value: formatMetricValue(quantification.crack_length_mm, quantification.crack_length_px) },
+        { label: "裂缝占比", value: item.segmentation?.crack_area_ratio ?? "-" },
+        {
+            label: "mm/pixel",
+            value: markerDetection.physical_scale_mm_per_pixel
+                ? Number(markerDetection.physical_scale_mm_per_pixel).toFixed(6)
+                : "-",
+        },
+        { label: "识别方式", value: formatMarkerMode(markerDetection) },
+        { label: "量化平面", value: formatPlaneMode(quantification) },
+        { label: "靶标数量", value: markerDetection.marker_count ?? "-" },
+        { label: "样本点数", value: quantification.sample_count ?? "-" },
+    ]);
+    const resultNotes = buildResultNoteTable([
+        { label: "质量说明", value: quality.summary || item.message || "-" },
+        { label: "风险说明", value: risk.risk_summary || item.segmentation_error || item.message || "-" },
+        { label: "处置建议", value: risk.recommendation || item.recommendation || "暂无处置建议。" },
+    ]);
     const analysisDetail = [
         buildRiskBreakdownCard(risk),
         buildStageCards(analysisStages),
@@ -1538,6 +1642,12 @@ function buildResultCard(item) {
         buildQuantificationTable(markerDetection, quantification),
     ].join("");
     const mediaDetail = `
+        <div class="result-media-head">
+            <div>
+                <span class="note-kicker">图像预览</span>
+                <p>原图、识别叠加、量化结果集中显示。</p>
+            </div>
+        </div>
         <div class="result-grid">
             ${buildResultMediaCard("原图", item.file_url, "无原图")}
             ${buildResultMediaCard("裂缝掩码", item.segmentation?.mask_url, "无掩码")}
@@ -1575,71 +1685,39 @@ function buildResultCard(item) {
     `;
     return `
         <article class="batch-result-card result-shell">
-            <div class="batch-result-head">
-                <div class="result-title-block">
-                    <span class="result-capture-tag">${escapeHtml(captureScale)}</span>
-                    <strong>${escapeHtml(item.detection_code || item.original_filename || "未命名结果")}</strong>
-                    <p>${escapeHtml(item.original_filename || "")}</p>
+            <div class="result-card-split">
+                <div class="result-info-column">
+                    <div class="batch-result-head">
+                        <div class="result-title-block">
+                            <span class="result-capture-tag">${escapeHtml(captureScale)}</span>
+                            <strong>${escapeHtml(item.detection_code || item.original_filename || "未命名结果")}</strong>
+                            <p>${escapeHtml(item.original_filename || "")}</p>
+                        </div>
+                        <div class="result-badges">
+                            <span class="quality-badge ${getQualityBadgeClass(quality.status)}">${escapeHtml(quality.status || "未知")}</span>
+                            <span class="meta-chip ${getRiskToneClass(riskLevel)}">
+                                <em>风险</em>
+                                <strong>${escapeHtml(riskLevel)}</strong>
+                            </span>
+                        </div>
+                    </div>
+                    ${buildMetaChipGroup([
+                        { label: "检测编号", value: item.detection_code || "-" },
+                        { label: "识别方式", value: formatMarkerMode(markerDetection) },
+                        { label: "量化平面", value: formatPlaneMode(quantification) },
+                        { label: "样本点", value: quantification.sample_count ?? "-" },
+                    ])}
+                    ${resultStats}
+                    ${resultNotes}
+                    <div class="report-actions">
+                        ${reportLink}
+                    </div>
+                    ${buildDetailSection("分析阶段与量化指标", analysisDetail, { open: true })}
                 </div>
-                <div class="result-badges">
-                    <span class="quality-badge ${getQualityBadgeClass(quality.status)}">${escapeHtml(quality.status || "未知")}</span>
-                    <span class="meta-chip ${getRiskToneClass(riskLevel)}">
-                        <em>风险</em>
-                        <strong>${escapeHtml(riskLevel)}</strong>
-                    </span>
-                </div>
+                <aside class="result-media-column">
+                    ${mediaDetail}
+                </aside>
             </div>
-            ${buildMetaChipGroup([
-                { label: "检测编号", value: item.detection_code || "-" },
-                { label: "识别方式", value: formatMarkerMode(markerDetection) },
-                { label: "量化平面", value: formatPlaneMode(quantification) },
-                { label: "样本点", value: quantification.sample_count ?? "-" },
-            ])}
-            <div class="summary-grid batch-summary-grid">
-                <article class="summary-card">
-                    <span>质量分</span>
-                    <strong>${escapeHtml(quality.score ?? "-")}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>风险评分</span>
-                    <strong>${escapeHtml(formatRiskScore(risk))}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>最大宽度</span>
-                    <strong>${escapeHtml(formatMetricValue(quantification.max_width_mm, quantification.max_width_px))}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>裂缝长度</span>
-                    <strong>${escapeHtml(formatMetricValue(quantification.crack_length_mm, quantification.crack_length_px))}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>裂缝占比</span>
-                    <strong>${escapeHtml(item.segmentation?.crack_area_ratio ?? "-")}</strong>
-                </article>
-                <article class="summary-card">
-                    <span>mm/pixel</span>
-                    <strong>${markerDetection.physical_scale_mm_per_pixel ? escapeHtml(Number(markerDetection.physical_scale_mm_per_pixel).toFixed(6)) : "-"}</strong>
-                </article>
-            </div>
-            <div class="result-notes">
-                <article class="note-card">
-                    <span class="note-kicker">质量说明</span>
-                    <p>${escapeHtml(quality.summary || item.message || "-")}</p>
-                </article>
-                <article class="note-card">
-                    <span class="note-kicker">风险说明</span>
-                    <p>${escapeHtml(risk.risk_summary || item.segmentation_error || item.message || "-")}</p>
-                </article>
-                <article class="note-card">
-                    <span class="note-kicker">处置建议</span>
-                    <p>${escapeHtml(risk.recommendation || item.recommendation || "暂无处置建议。")}</p>
-                </article>
-            </div>
-            <div class="report-actions">
-                ${reportLink}
-            </div>
-            ${buildDetailSection("分析阶段与量化指标", analysisDetail, { open: true })}
-            ${buildDetailSection("图像输出与技术元数据", mediaDetail)}
         </article>
     `;
 }
@@ -1814,7 +1892,7 @@ function renderHistory(records) {
                         <em>风险</em>
                         <strong>${escapeHtml(riskLevel)}</strong>
                     </span>
-                    <span class="history-time">${escapeHtml(record.created_at || "未知时间")}</span>
+                    <span class="history-time">${escapeHtml(getGeneratedTimeText(record))}</span>
                 </div>
             </div>
             ${buildMetaChipGroup([
@@ -1878,7 +1956,7 @@ function renderSurveySummary(summary) {
                                 <em>风险</em>
                                 <strong>${escapeHtml(item.risk_level || "-")}</strong>
                             </span>
-                            <span class="history-time">${escapeHtml(item.created_at || "未知时间")}</span>
+                            <span class="history-time">${escapeHtml(getGeneratedTimeText(item))}</span>
                         </div>
                     </div>
                     ${buildMetaChipGroup([
@@ -2170,6 +2248,7 @@ async function rerunDetection(recordId) {
     }
 }
 
+arrangeSplitPreviewWorkspace();
 updateHouseBinding(null, "");
 updateBundleSizeSummary();
 resetMediumTargetPrecheck();

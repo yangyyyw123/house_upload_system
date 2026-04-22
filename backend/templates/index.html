@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260422-single-column-entry-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260422-result-card-split-1') }}">
 </head>
 <body class="platform-theme">
     <main class="page">
@@ -212,6 +212,7 @@
             </div>
 
             <div class="target-layout">
+                <div class="target-entry-column">
                 <aside class="target-guide">
                     <article class="target-guide-card target-guide-card-accent">
                         <span class="hero-side-kicker">使用建议</span>
@@ -287,9 +288,19 @@
                         </div>
                     </form>
                     </section>
-
-                    <div id="targetResult" class="target-result hidden"></div>
                 </div>
+                </div>
+
+                <aside class="preview-dock preview-dock-target">
+                    <section class="preview-dock-shell preview-dock-shell-target">
+                        <div class="preview-dock-head">
+                            <span class="hero-side-kicker">预览窗口</span>
+                            <strong>靶标与打印预览</strong>
+                        </div>
+                        <div id="targetResult" class="target-result hidden"></div>
+                        <p class="preview-dock-empty">生成靶标后，在这里直接预览打印版面和下载入口。</p>
+                    </section>
+                </aside>
             </div>
         </section>
 
@@ -428,7 +439,16 @@
                         </section>
                     </div>
 
-                    <aside class="upload-side-column">
+                    <aside class="upload-side-column preview-dock preview-dock-upload">
+                        <section class="preview-dock-shell preview-dock-shell-upload">
+                            <div class="preview-dock-head">
+                                <span class="hero-side-kicker">实时预览</span>
+                                <strong>上传图像与报告预览</strong>
+                            </div>
+                            <div id="uploadPreviewStack" class="preview-stack"></div>
+                            <p class="preview-dock-empty">选择并上传图片后，右侧会直接显示三张图预览、靶标识别结果和报告内容。</p>
+                        </section>
+
                         <div class="task-query-panel task-query-panel-track">
                             <div class="task-panel-heading">
                                 <strong>检测任务 Detection Task</strong>
@@ -489,12 +509,32 @@
                     <p class="section-kicker">Step 4</p>
                     <h2>检测结果</h2>
                 </div>
-                <p class="section-note">这里会显示长景 / 中景 / 近景三张图各自的识别阶段、量化阶段、风险结论和统计图。</p>
             </div>
-            <div id="batchResultOverview" class="dashboard-overview hidden"></div>
-            <div id="batchBundleActions" class="report-actions hidden"></div>
-            <div id="bundleProjectionPanel" class="note-card bundle-projection-panel hidden"></div>
-            <div id="batchResultList" class="batch-result-list"></div>
+            <div class="result-workspace">
+                <div class="result-summary-column">
+                    <section class="result-brief-shell">
+                        <div class="preview-dock-head">
+                            <span class="hero-side-kicker">结果概览</span>
+                            <strong>批次摘要与报告入口</strong>
+                        </div>
+                        <div id="batchResultOverview" class="dashboard-overview hidden"></div>
+                        <div id="batchBundleActions" class="report-actions hidden"></div>
+                        <div id="bundleProjectionPanel" class="note-card bundle-projection-panel hidden"></div>
+                        <p class="preview-dock-empty result-brief-empty">分析完成后，这里显示批次概览、总报告入口和长景回投摘要。</p>
+                    </section>
+                </div>
+
+                <aside class="result-preview-column">
+                    <section class="result-preview-shell">
+                        <div class="preview-dock-head">
+                            <span class="hero-side-kicker">结果预览</span>
+                            <strong>三景结果与报告明细</strong>
+                        </div>
+                        <div id="batchResultList" class="batch-result-list"></div>
+                        <p class="preview-dock-empty result-preview-empty">分析完成后，这里显示每张图的识别结果、量化信息和报告明细。</p>
+                    </section>
+                </aside>
+            </div>
         </section>
 
         <section id="historyPanel" class="panel panel-history hidden">
@@ -555,6 +595,6 @@
         </section>
     </main>
 
-    <script src="{{ url_for('static', filename='script.js', v='20260422-dark-platform-4') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v='20260422-time-sync-1') }}"></script>
 </body>
 </html>
