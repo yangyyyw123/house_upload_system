@@ -4,13 +4,81 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260422-result-card-split-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260428-layout-refine-3') }}">
 </head>
-<body class="platform-theme">
+<body class="platform-theme platform-theme-command">
     <main class="page">
+        <div class="command-shell">
+            <aside class="command-rail" aria-label="侧边导航">
+                <a class="command-rail-logo" href="#top" aria-label="返回顶部">
+                    <span class="command-rail-logo-mark">HS</span>
+                    <span class="command-rail-logo-text">巡检中台</span>
+                </a>
+                <div class="command-rail-heading">
+                    <span class="command-rail-kicker">Command Desk</span>
+                    <strong>巡检工作台</strong>
+                    <p>围绕建档、靶标生成、图像分析和历史回查组织整套作业流程。</p>
+                </div>
+                <nav class="command-rail-nav">
+                    <a class="command-rail-item command-rail-item-active" href="#top">
+                        <span class="command-rail-index">01</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">总览</span>
+                            <span class="command-rail-caption">平台状态与流程概览</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#archiveSection">
+                        <span class="command-rail-index">02</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">档案</span>
+                            <span class="command-rail-caption">房屋建档与基础绑定</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#guidanceSection">
+                        <span class="command-rail-index">03</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">指引</span>
+                            <span class="command-rail-caption">现场拍摄与采集要求</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#targetSection">
+                        <span class="command-rail-index">04</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">靶标</span>
+                            <span class="command-rail-caption">二维码生成与打印</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#uploadSection">
+                        <span class="command-rail-index">05</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">分析</span>
+                            <span class="command-rail-caption">三景上传与任务执行</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#historyPanel">
+                        <span class="command-rail-index">06</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">历史</span>
+                            <span class="command-rail-caption">同房屋记录回查</span>
+                        </span>
+                    </a>
+                    <a class="command-rail-item" href="#surveyPanel">
+                        <span class="command-rail-index">07</span>
+                        <span class="command-rail-copy">
+                            <span class="command-rail-label">汇总</span>
+                            <span class="command-rail-caption">风险清单与平台态势</span>
+                        </span>
+                    </a>
+                </nav>
+                <div class="command-rail-foot">
+                    <span>房屋检测档案系统</span>
+                </div>
+            </aside>
+
+            <div class="command-main">
         <header class="platform-topbar" id="top">
             <div class="platform-brand">
-                <span class="platform-brand-kicker">Inspection Command Center</span>
+                <span class="platform-brand-kicker">房屋安全巡检中台 · Inspection Command Center</span>
                 <strong>房屋裂缝智能检测平台</strong>
                 <p class="platform-brand-summary">
                     支持房屋档案建模、拍摄指引、二维码靶标生成、三景图像上传预检、检测任务追踪与历史风险汇总。
@@ -33,6 +101,55 @@
 
         <section id="globalStatus" class="global-status status status-idle">
             页面已就绪。建议先建立房屋档案，再上传裂缝图像。
+        </section>
+
+        <section class="command-overview-panel">
+            <article class="command-overview-hero">
+                <div class="command-overview-copy">
+                    <span class="command-mini-tag">作业控制台</span>
+                    <h1>房屋裂缝巡检任务总览</h1>
+                    <p>
+                        参考专业巡检平台与时空作业中台的界面语言，当前首页以“任务导航、核心状态、分区工作台”三层结构组织，
+                        让建档、靶标、上传分析和历史回查都像一个完整的作业流程。
+                    </p>
+                </div>
+                <div class="command-overview-metrics">
+                    <article>
+                        <span>流程阶段</span>
+                        <strong>6 步闭环</strong>
+                        <p>建档、拍摄、靶标、上传、历史、汇总</p>
+                    </article>
+                    <article>
+                        <span>核心入口</span>
+                        <strong>3 个工作区</strong>
+                        <p>档案建模、靶标生成、批量分析</p>
+                    </article>
+                    <article>
+                        <span>结果产物</span>
+                        <strong>报告 + 历史</strong>
+                        <p>支持单次报告、总报告与趋势回查</p>
+                    </article>
+                    <article>
+                        <span>平台定位</span>
+                        <strong>专业巡检中台</strong>
+                        <p>偏任务型、证据型、归档型作业界面</p>
+                    </article>
+                </div>
+            </article>
+            <article class="command-overview-flow">
+                <div class="command-overview-flow-head">
+                    <strong>推荐作业路径</strong>
+                    <p>先建立房屋档案，再生成专属靶标，最后完成三景采集与报告归档。</p>
+                </div>
+                <div class="command-overview-flow-grid">
+                    <a href="#archiveSection">01 建立房屋档案</a>
+                    <a href="#guidanceSection">02 查看拍摄指引</a>
+                    <a href="#targetSection">03 生成二维码靶标</a>
+                    <a href="#uploadSection">04 提交三景分析</a>
+                    <a href="#historyPanel">05 查看历史记录</a>
+                    <a href="#surveyPanel">06 汇总风险清单</a>
+                </div>
+            </article>
         </section>
 
         <section id="archiveSection" class="panel panel-archive">
@@ -332,17 +449,6 @@
             </div>
 
             <form id="uploadForm" class="upload-form" enctype="multipart/form-data">
-                <article class="upload-hero-card">
-                    <span class="hero-side-kicker">上传前检查</span>
-                    <strong>按长景 / 中景 / 近景顺序准备图像</strong>
-                    <p>系统会先检查中景二维码与图像质量，再进入正式分析。上传成功后可根据任务编号继续查询处理进度。</p>
-                    <div class="upload-flow" aria-label="上传流程">
-                        <span>长景定位</span>
-                        <span>中景识别</span>
-                        <span>近景量化</span>
-                    </div>
-                </article>
-
                 <div class="upload-analysis-grid">
                     <div class="upload-main-column">
                         <section class="workspace-panel workspace-panel-upload-main">
@@ -423,6 +529,15 @@
                                 </article>
                             </div>
 
+                            <section class="upload-inline-preview-shell preview-dock-shell preview-dock-shell-upload">
+                                <div class="preview-dock-head">
+                                    <span class="hero-side-kicker">瀹炴椂棰勮</span>
+                                    <strong>涓夋櫙鍥惧儚棰勮</strong>
+                                </div>
+                                <div id="uploadPreviewStack" class="preview-stack"></div>
+                                <p class="preview-dock-empty upload-preview-empty">閫夋嫨骞朵笂浼犲浘鐗囧悗锛屼笅鏂逛細鐩存帴鏄剧ず闀挎櫙銆佷腑鏅€佽繎鏅笁寮犲浘鐨勯瑙堛€?/p>
+                            </section>
+
                             <div id="bundleSizePanel" class="bundle-size-panel">
                                 <strong>批量上传大小</strong>
                                 <p id="bundleSizeSummary">尚未选择完整的长景 / 中景 / 近景图像。</p>
@@ -457,13 +572,13 @@
                         </section>
                     </div>
 
-                    <aside class="upload-side-column preview-dock preview-dock-upload">
-                        <section class="preview-dock-shell preview-dock-shell-upload">
+                        <section class="task-monitor-grid">
+                        <section class="preview-dock-shell preview-dock-shell-upload legacy-upload-preview-shell hidden" aria-hidden="true">
                             <div class="preview-dock-head">
                                 <span class="hero-side-kicker">实时预览</span>
                                 <strong>上传图像与报告预览</strong>
                             </div>
-                            <div id="uploadPreviewStack" class="preview-stack"></div>
+                            <div id="uploadPreviewStackLegacy" class="preview-stack"></div>
                             <p class="preview-dock-empty">选择并上传图片后，右侧会直接显示三张图预览、靶标识别结果和报告内容。</p>
                         </section>
 
@@ -516,7 +631,7 @@
                             </ul>
                         </article>
 
-                    </aside>
+                        </section>
                 </div>
             </form>
         </section>
@@ -611,8 +726,10 @@
                 </div>
             </div>
         </section>
+            </div>
+        </div>
     </main>
 
-    <script src="{{ url_for('static', filename='script.js', v='20260422-time-sync-1') }}"></script>
+    <script src="{{ url_for('static', filename='script.js', v='20260428-layout-refine-3') }}"></script>
 </body>
 </html>

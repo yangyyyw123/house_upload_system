@@ -713,12 +713,48 @@ function renderTargetResult(payload) {
     ];
     const scanUrl = payload.scan_url || payload.detail_url || payload.profile?.detail_url || "";
     const scanWarning = payload.scan_url_warning || "";
+    const summaryFacts = [
+        { label: "靶标规格", value: spec.label || "-" },
+        { label: "打印尺寸", value: formatTargetSize(spec) },
+        { label: "二维码边长", value: spec.qr_size_mm ? `${spec.qr_size_mm} mm` : "-" },
+    ];
 
     container.innerHTML = `
         <div class="target-preview-card">
-            ${payload.preview_url ? `<img src="${escapeHtml(payload.preview_url)}" alt="二维码靶标预览">` : ""}
+            <div class="target-preview-head">
+                <div>
+                    <span class="hero-side-kicker">打印预览</span>
+                    <strong>靶标版面</strong>
+                </div>
+            </div>
+            <div class="target-preview-frame">
+                ${
+                    payload.preview_url
+                        ? `<img src="${escapeHtml(payload.preview_url)}" alt="二维码靶标预览">`
+                        : `<p class="target-preview-placeholder">暂无靶标预览</p>`
+                }
+            </div>
         </div>
         <div class="target-meta-card">
+            <div class="target-meta-head">
+                <div>
+                    <span class="hero-side-kicker">关联信息</span>
+                    <strong>靶标参数与档案信息</strong>
+                </div>
+                <span class="meta-chip">可打印 / 可扫码</span>
+            </div>
+            <div class="target-summary-strip">
+                ${summaryFacts
+                    .map(
+                        (item) => `
+                            <article>
+                                <span>${escapeHtml(item.label)}</span>
+                                <strong>${escapeHtml(item.value)}</strong>
+                            </article>
+                        `
+                    )
+                    .join("")}
+            </div>
             <div class="target-meta-grid">
                 ${metaCards
                     .map(
@@ -731,9 +767,11 @@ function renderTargetResult(payload) {
                     )
                     .join("")}
             </div>
-            <p class="target-meta-text">编码内容已写入二维码与 JSON 清单。建议优先下载 PDF 打印；扫码后可直接查看该靶标的档案信息和报告入口。</p>
-            ${scanUrl ? `<p class="target-meta-text target-scan-url"><strong>扫码详情页：</strong>${escapeHtml(scanUrl)}</p>` : ""}
-            ${scanWarning ? `<p class="target-meta-text target-scan-warning">${escapeHtml(scanWarning)}</p>` : ""}
+            <div class="target-meta-note">
+                <p class="target-meta-text">编码内容已写入二维码与 JSON 清单。建议优先下载 PDF 打印；扫码后可直接查看该靶标的档案信息和报告入口。</p>
+                ${scanUrl ? `<p class="target-meta-text target-scan-url"><strong>扫码详情页：</strong>${escapeHtml(scanUrl)}</p>` : ""}
+                ${scanWarning ? `<p class="target-meta-text target-scan-warning">${escapeHtml(scanWarning)}</p>` : ""}
+            </div>
             <div class="target-link-row">
                 ${payload.detail_url ? `<a class="button-link" href="${escapeHtml(payload.detail_url)}" target="_blank" rel="noopener noreferrer">打开详情页</a>` : ""}
                 ${files.pdf_url ? `<a class="button-link" href="${escapeHtml(files.pdf_url)}" target="_blank" rel="noopener noreferrer">下载 PDF</a>` : ""}
@@ -746,14 +784,7 @@ function renderTargetResult(payload) {
 }
 
 function arrangeSplitPreviewWorkspace() {
-    const uploadMainColumn = document.querySelector(".upload-main-column");
-    const uploadSideColumn = document.querySelector(".upload-side-column");
     const uploadPreviewStack = document.getElementById("uploadPreviewStack");
-    const uploadHeroCard = document.querySelector("#uploadForm > .upload-hero-card");
-
-    if (uploadMainColumn && uploadHeroCard) {
-        uploadMainColumn.insertBefore(uploadHeroCard, uploadMainColumn.firstElementChild);
-    }
 
     if (uploadPreviewStack) {
         ["long_view_preview_card", "medium_view_preview_card", "close_view_preview_card"].forEach((cardId) => {
@@ -763,19 +794,6 @@ function arrangeSplitPreviewWorkspace() {
             }
         });
     }
-
-    if (uploadMainColumn) {
-        [
-            document.querySelector(".task-query-panel-track"),
-            document.getElementById("taskStatusPanel"),
-            document.querySelector(".task-guide-card-track"),
-        ].forEach((panel) => {
-            if (panel && panel.parentElement !== uploadMainColumn) {
-                uploadMainColumn.appendChild(panel);
-            }
-        });
-    }
-
 }
 
 async function generateTarget() {
@@ -2275,12 +2293,162 @@ async function rerunDetection(recordId) {
     }
 }
 
+function initializeHistoryPanelCopy() {
+    const boardTitle = document.querySelector("#historyHouseBoard .section-subhead strong");
+    const boardDescription = document.querySelector("#historyHouseBoard .section-subhead p");
+    const currentHint = document.getElementById("historyCurrentHint");
+
+    if (boardTitle) {
+        boardTitle.textContent = "历史检测房屋";
+    }
+    if (boardDescription) {
+        boardDescription.textContent =
+            "以下房屋已存在检测记录。点击房号可直接打开最新检测报告，点击“查看历史”可展开该房屋的历次检测记录。";
+    }
+    if (currentHint) {
+        currentHint.textContent = "选择房屋后，这里将显示该房屋的历史检测结果、趋势信息和报告入口。";
+    }
+}
+
+function setCommandNavigationActive(activeHref) {
+    document.querySelectorAll(".command-rail-item[href^='#']").forEach((link) => {
+        link.classList.toggle("command-rail-item-active", link.getAttribute("href") === activeHref);
+    });
+    document.querySelectorAll(".platform-nav-item[href^='#']").forEach((link) => {
+        link.classList.toggle("platform-nav-item-active", link.getAttribute("href") === activeHref);
+    });
+}
+
+function initializeCommandNavigation() {
+    const links = Array.from(
+        document.querySelectorAll(".command-rail-item[href^='#'], .platform-nav-item[href^='#']")
+    );
+    if (!links.length) {
+        return;
+    }
+
+    const sections = [];
+    const seen = new Set();
+    links.forEach((link) => {
+        const href = link.getAttribute("href");
+        if (!href || seen.has(href)) {
+            return;
+        }
+        const target = document.querySelector(href);
+        if (!target) {
+            return;
+        }
+        seen.add(href);
+        sections.push({ href, target });
+    });
+
+    if (!sections.length) {
+        return;
+    }
+
+    const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const setActive = (href) => {
+        if (!href) {
+            return;
+        }
+        setCommandNavigationActive(href);
+    };
+
+    links.forEach((link) => {
+        const href = link.getAttribute("href");
+        const section = sections.find((item) => item.href === href);
+        if (!section) {
+            return;
+        }
+        link.addEventListener("click", (event) => {
+            event.preventDefault();
+            setActive(href);
+            section.target.scrollIntoView({
+                behavior: prefersReducedMotion ? "auto" : "smooth",
+                block: "start",
+            });
+            if (window.history?.replaceState) {
+                window.history.replaceState(null, "", href);
+            }
+        });
+    });
+
+    const initialHref =
+        sections.find((item) => item.href === window.location.hash)?.href ||
+        sections.find((item) => item.target.getBoundingClientRect().top >= 0)?.href ||
+        sections[0].href;
+    setActive(initialHref);
+
+    if (typeof IntersectionObserver !== "function") {
+        return;
+    }
+
+    const observer = new IntersectionObserver(
+        (entries) => {
+            const visible = entries
+                .filter((entry) => entry.isIntersecting)
+                .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+
+            if (visible?.target?.id) {
+                setActive(`#${visible.target.id}`);
+            }
+        },
+        {
+            rootMargin: "-18% 0px -58% 0px",
+            threshold: [0.18, 0.35, 0.55],
+        }
+    );
+
+    sections.forEach(({ target }) => observer.observe(target));
+}
+
+async function loadHouseDetections(houseId) {
+    if (!houseId) {
+        setVisible("historyCurrentHint", false);
+        setVisible("historyOverview", false);
+        setVisible("trendSummaryCard", false);
+        setVisible("historyList", false);
+        setVisible("historyPanel", historyHouseDirectory.length > 0);
+        return;
+    }
+
+    try {
+        const response = await fetch(`/house/${houseId}/detections`);
+        const result = await response.json();
+        if (!response.ok) {
+            setVisible("historyCurrentHint", false);
+            setVisible("historyOverview", false);
+            setVisible("trendSummaryCard", false);
+            setVisible("historyList", false);
+            setVisible("historyPanel", historyHouseDirectory.length > 0);
+            return;
+        }
+
+        activeHistoryHouseId = houseId;
+        const historyCurrentHint = document.getElementById("historyCurrentHint");
+        if (historyCurrentHint) {
+            historyCurrentHint.textContent = result.house_number
+                ? `当前正在查看房屋 ${result.house_number} 的历史检测结果、趋势信息和报告入口。`
+                : "当前正在查看该房屋的历史检测记录。";
+        }
+        setVisible("historyCurrentHint", true);
+        renderHistoryHouseDirectory();
+        renderTrendSummary(result.trend_summary);
+        renderHistory(result.records || []);
+        setVisible("historyPanel", true);
+    } catch (error) {
+        console.error("Failed to load house detections:", error);
+    }
+}
+
 arrangeSplitPreviewWorkspace();
 updateHouseBinding(null, "");
 setDefaultTargetInspectionTime();
 updateBundleSizeSummary();
 resetMediumTargetPrecheck();
 loadTargetSpecs();
+initializeHistoryPanelCopy();
+initializeCommandNavigation();
 loadSurveySummary();
 syncTargetHouseNumber(false);
 initializeWorkspaceValidation();
