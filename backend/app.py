@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, render_template, request, send_file, send_from_directory, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
 from flask_sqlalchemy import SQLAlchemy
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat, UnidentifiedImageError
@@ -75,6 +75,16 @@ try:
     APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
 except ZoneInfoNotFoundError:
     APP_TIMEZONE = timezone(timedelta(hours=8)) if APP_TIMEZONE_NAME == "Asia/Shanghai" else timezone.utc
+
+
+def normalize_frontend_entry_path(value: str | None) -> str:
+    candidate = (value or "/platform").strip() or "/platform"
+    if not candidate.startswith("/"):
+        candidate = f"/{candidate}"
+    return candidate.rstrip("/") or "/"
+
+
+FRONTEND_ENTRY_PATH = normalize_frontend_entry_path(os.environ.get("HOUSE_UPLOAD_ENTRY_PATH"))
 
 QUALITY_GUIDANCE = {
     "good": "图像质量通过，可继续自动分析。",
@@ -3825,9 +3835,20 @@ def rerun_detection_record(record_id: int):
     )
 
 
+def render_frontend_entry():
+    return render_template("index.html")
+
+
+if FRONTEND_ENTRY_PATH != "/":
+    app.add_url_rule(FRONTEND_ENTRY_PATH, "frontend_entry", render_frontend_entry)
+    app.add_url_rule(f"{FRONTEND_ENTRY_PATH}/", "frontend_entry_slash", render_frontend_entry)
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    if FRONTEND_ENTRY_PATH == "/":
+        return render_frontend_entry()
+    return redirect(f"{FRONTEND_ENTRY_PATH}/", code=302)
 
 
 ensure_database_tables()

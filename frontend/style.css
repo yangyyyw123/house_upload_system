@@ -8084,3 +8084,1053 @@ body.platform-theme::after {
         border-right: 0;
     }
 }
+
+/* 2026-05-06 HIT blue light palette */
+.platform-theme.platform-theme-command {
+    --accent: #0096c3;
+    --accent-strong: #00789b;
+    --secondary: #13a6cf;
+    --command-bg: #f4fbfd;
+    --command-shell: #ffffff;
+    --command-panel: #ffffff;
+    --command-panel-strong: #eef9fc;
+    --command-card: #f7fcfd;
+    --command-border: rgba(0, 150, 195, 0.14);
+    --command-border-strong: rgba(0, 150, 195, 0.22);
+    --command-text: #13384a;
+    --command-muted: #62808f;
+    --command-accent: #0096c3;
+    --command-accent-strong: #00789b;
+    --command-accent-bright: #25b2d9;
+    --command-accent-soft: #e2f6fb;
+    --command-accent-rgb: 0, 150, 195;
+    --command-shadow: 0 18px 34px rgba(16, 50, 66, 0.08);
+}
+
+body.platform-theme.platform-theme-command {
+    background:
+        radial-gradient(circle at top left, rgba(var(--command-accent-rgb), 0.16), transparent 24%),
+        radial-gradient(circle at 84% 14%, rgba(37, 178, 217, 0.08), transparent 18%),
+        linear-gradient(180deg, #fcfeff 0%, #f4fbfd 44%, #eef9fc 100%);
+    color: var(--command-text);
+}
+
+body.platform-theme.platform-theme-command::before {
+    background: rgba(var(--command-accent-rgb), 0.13);
+}
+
+body.platform-theme.platform-theme-command::after {
+    background: rgba(37, 178, 217, 0.1);
+}
+
+.platform-theme.platform-theme-command .command-main::before {
+    background-image:
+        linear-gradient(rgba(var(--command-accent-rgb), 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--command-accent-rgb), 0.04) 1px, transparent 1px);
+    opacity: 0.26;
+}
+
+.platform-theme.platform-theme-command .command-rail,
+.platform-theme.platform-theme-command .platform-topbar {
+    background: linear-gradient(180deg, #0c98c4 0%, #17a7cf 100%);
+    border-color: rgba(255, 255, 255, 0.24);
+    box-shadow: 0 24px 42px rgba(0, 150, 195, 0.16);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .command-overview-hero,
+.platform-theme.platform-theme-command .global-status,
+.platform-theme.platform-theme-command .upload-hero-card {
+    background: linear-gradient(135deg, #0f9bc7 0%, #19abd4 72%, #45c1e1 100%);
+    border-color: rgba(0, 150, 195, 0.18);
+    box-shadow: 0 20px 36px rgba(0, 150, 195, 0.14);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .command-overview-flow,
+.platform-theme.platform-theme-command .panel,
+.platform-theme.platform-theme-command .workspace-panel,
+.platform-theme.platform-theme-command .upload-stage-card,
+.platform-theme.platform-theme-command .task-query-panel,
+.platform-theme.platform-theme-command .task-status-panel,
+.platform-theme.platform-theme-command .binding-card,
+.platform-theme.platform-theme-command .preview-card,
+.platform-theme.platform-theme-command .quality-panel,
+.platform-theme.platform-theme-command .bundle-size-panel,
+.platform-theme.platform-theme-command .target-precheck-panel,
+.platform-theme.platform-theme-command .upload-config-card,
+.platform-theme.platform-theme-command .upload-slot,
+.platform-theme.platform-theme-command .field-card,
+.platform-theme.platform-theme-command .field-addon,
+.platform-theme.platform-theme-command .form-action-card,
+.platform-theme.platform-theme-command .action-row-primary,
+.platform-theme.platform-theme-command .info-guide-card,
+.platform-theme.platform-theme-command .guide-overview-card,
+.platform-theme.platform-theme-command .target-guide-card,
+.platform-theme.platform-theme-command .guide-card,
+.platform-theme.platform-theme-command .dashboard-card,
+.platform-theme.platform-theme-command .summary-card,
+.platform-theme.platform-theme-command .result-card,
+.platform-theme.platform-theme-command .note-card,
+.platform-theme.platform-theme-command .trend-card,
+.platform-theme.platform-theme-command .history-item,
+.platform-theme.platform-theme-command .detail-section,
+.platform-theme.platform-theme-command .batch-result-card,
+.platform-theme.platform-theme-command .bundle-quality-card,
+.platform-theme.platform-theme-command .survey-summary-board,
+.platform-theme.platform-theme-command .survey-risk-board,
+.platform-theme.platform-theme-command .history-directory-board,
+.platform-theme.platform-theme-command .target-preview-card,
+.platform-theme.platform-theme-command .target-meta-card,
+.platform-theme.platform-theme-command .result-brief-shell,
+.platform-theme.platform-theme-command .result-preview-shell,
+.platform-theme.platform-theme-command .preview-dock-shell,
+.platform-theme.platform-theme-command .workspace-panel-header,
+.platform-theme.platform-theme-command .workspace-summary,
+.platform-theme.platform-theme-command .result-media-column,
+.platform-theme.platform-theme-command .task-guide-card {
+    background: linear-gradient(180deg, #ffffff 0%, #f3fbfd 100%);
+    border-color: var(--command-border);
+    box-shadow: var(--command-shadow);
+}
+
+.platform-theme.platform-theme-command .command-rail::before,
+.platform-theme.platform-theme-command .platform-topbar::before,
+.platform-theme.platform-theme-command .panel::before,
+.platform-theme.platform-theme-command .global-status::before,
+.platform-theme.platform-theme-command .hero-copy::before,
+.platform-theme.platform-theme-command .hero-checklist::before {
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.88) 48%, transparent 100%);
+}
+
+.platform-theme.platform-theme-command .command-rail-logo-mark {
+    background: #ffffff;
+    color: var(--command-accent-strong);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+}
+
+.platform-theme.platform-theme-command .command-rail-logo-text,
+.platform-theme.platform-theme-command .platform-brand strong,
+.platform-theme.platform-theme-command .command-overview-copy h1,
+.platform-theme.platform-theme-command .upload-hero-card strong,
+.platform-theme.platform-theme-command .global-status {
+    color: #ffffff;
+    text-shadow: none;
+}
+
+.platform-theme.platform-theme-command .platform-brand-summary,
+.platform-theme.platform-theme-command .command-rail-heading p,
+.platform-theme.platform-theme-command .command-rail-caption,
+.platform-theme.platform-theme-command .command-rail-foot,
+.platform-theme.platform-theme-command .command-overview-copy p,
+.platform-theme.platform-theme-command .upload-hero-card p {
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.platform-theme.platform-theme-command .command-rail-heading {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.24);
+}
+
+.platform-theme.platform-theme-command .command-rail-kicker,
+.platform-theme.platform-theme-command .platform-brand-kicker,
+.platform-theme.platform-theme-command .command-mini-tag,
+.platform-theme.platform-theme-command .upload-hero-kicker,
+.platform-theme.platform-theme-command .global-status::after {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .eyebrow,
+.platform-theme.platform-theme-command .section-kicker,
+.platform-theme.platform-theme-command .hero-side-kicker,
+.platform-theme.platform-theme-command .guide-tag,
+.platform-theme.platform-theme-command .workspace-panel-kicker,
+.platform-theme.platform-theme-command .task-panel-tag,
+.platform-theme.platform-theme-command .workspace-summary-count,
+.platform-theme.platform-theme-command .stage-chip,
+.platform-theme.platform-theme-command .meta-chip,
+.platform-theme.platform-theme-command .result-capture-tag,
+.platform-theme.platform-theme-command .history-time,
+.platform-theme.platform-theme-command .quality-badge,
+.platform-theme.platform-theme-command .task-status-head span,
+.platform-theme.platform-theme-command .target-meta-note {
+    background: rgba(var(--command-accent-rgb), 0.1);
+    border-color: rgba(var(--command-accent-rgb), 0.18);
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .command-rail-item,
+.platform-theme.platform-theme-command .platform-nav-item {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    box-shadow: none;
+}
+
+.platform-theme.platform-theme-command .command-rail-item::before {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+.platform-theme.platform-theme-command .command-rail-index {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .command-rail-item:hover,
+.platform-theme.platform-theme-command .command-rail-item:focus-visible,
+.platform-theme.platform-theme-command .command-rail-item-active,
+.platform-theme.platform-theme-command .platform-nav-item:hover,
+.platform-theme.platform-theme-command .platform-nav-item:focus-visible,
+.platform-theme.platform-theme-command .platform-nav-item-active {
+    background: #ffffff;
+    border-color: #ffffff;
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .command-rail-item:hover .command-rail-caption,
+.platform-theme.platform-theme-command .command-rail-item:focus-visible .command-rail-caption,
+.platform-theme.platform-theme-command .command-rail-item-active .command-rail-caption {
+    color: var(--command-muted);
+}
+
+.platform-theme.platform-theme-command .command-rail-item:hover .command-rail-index,
+.platform-theme.platform-theme-command .command-rail-item:focus-visible .command-rail-index,
+.platform-theme.platform-theme-command .command-rail-item-active .command-rail-index,
+.platform-theme.platform-theme-command .platform-nav-item:hover,
+.platform-theme.platform-theme-command .platform-nav-item:focus-visible,
+.platform-theme.platform-theme-command .platform-nav-item-active {
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .command-rail-item:hover::before,
+.platform-theme.platform-theme-command .command-rail-item:focus-visible::before,
+.platform-theme.platform-theme-command .command-rail-item-active::before {
+    background: linear-gradient(180deg, var(--command-accent-bright) 0%, rgba(var(--command-accent-rgb), 0.18) 100%);
+}
+
+.platform-theme.platform-theme-command .platform-signal span {
+    background: #ffffff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.32);
+}
+
+.platform-theme.platform-theme-command .command-overview-metrics article {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.24);
+}
+
+.platform-theme.platform-theme-command .command-overview-metrics span,
+.platform-theme.platform-theme-command .command-overview-metrics p {
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.platform-theme.platform-theme-command .command-overview-metrics strong {
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .command-overview-flow-grid a,
+.platform-theme.platform-theme-command .task-status-grid article,
+.platform-theme.platform-theme-command .target-summary-strip article,
+.platform-theme.platform-theme-command .panel-results .result-card,
+.platform-theme.platform-theme-command .panel-results .stage-card,
+.platform-theme.platform-theme-command .panel-results .quant-note-card,
+.platform-theme.platform-theme-command .panel-history .note-card,
+.platform-theme.platform-theme-command .panel-results .result-placeholder,
+.platform-theme.platform-theme-command .target-preview-frame,
+.platform-theme.platform-theme-command .panel-results .result-stat-table,
+.platform-theme.platform-theme-command .panel-results .result-note-table,
+.platform-theme.platform-theme-command .panel-results .quant-table,
+.platform-theme.platform-theme-command .panel-results .result-media-column .result-meta,
+.platform-theme.platform-theme-command .panel-history .quant-table {
+    border-color: rgba(var(--command-accent-rgb), 0.14);
+    background: linear-gradient(180deg, #ffffff 0%, #edf9fc 100%);
+}
+
+.platform-theme.platform-theme-command .command-overview-flow-grid a {
+    color: var(--command-text);
+}
+
+.platform-theme.platform-theme-command .command-overview-flow-grid a:hover,
+.platform-theme.platform-theme-command .command-overview-flow-grid a:focus-visible {
+    background: linear-gradient(135deg, var(--command-accent-strong) 0%, var(--command-accent) 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.24);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command .panel-heading h2,
+.platform-theme.platform-theme-command .workspace-panel-copy h3,
+.platform-theme.platform-theme-command .preview-dock-head strong,
+.platform-theme.platform-theme-command .task-panel-heading strong,
+.platform-theme.platform-theme-command .task-status-head strong,
+.platform-theme.platform-theme-command .section-subhead strong,
+.platform-theme.platform-theme-command .target-preview-head strong,
+.platform-theme.platform-theme-command .target-meta-head strong,
+.platform-theme.platform-theme-command .panel-results .result-card h3,
+.platform-theme.platform-theme-command .panel-results .result-title-block strong,
+.platform-theme.platform-theme-command .panel-history .history-header strong,
+.platform-theme.platform-theme-command .command-overview-flow-head strong {
+    color: var(--command-text);
+    text-shadow: none;
+}
+
+.platform-theme.platform-theme-command .section-note,
+.platform-theme.platform-theme-command .field-helper,
+.platform-theme.platform-theme-command .hint,
+.platform-theme.platform-theme-command .preview-dock-empty,
+.platform-theme.platform-theme-command .history-current-hint,
+.platform-theme.platform-theme-command .target-meta-text,
+.platform-theme.platform-theme-command .info-guide-list,
+.platform-theme.platform-theme-command .task-guide-list,
+.platform-theme.platform-theme-command .guide-card p,
+.platform-theme.platform-theme-command .note-card p,
+.platform-theme.platform-theme-command .bundle-quality-summary,
+.platform-theme.platform-theme-command .bundle-quality-file,
+.platform-theme.platform-theme-command .workspace-panel-copy p,
+.platform-theme.platform-theme-command .workspace-summary p,
+.platform-theme.platform-theme-command .dashboard-card p,
+.platform-theme.platform-theme-command .command-overview-flow-head p,
+.platform-theme.platform-theme-command .history-summary,
+.platform-theme.platform-theme-command .history-lead,
+.platform-theme.platform-theme-command .panel-history .history-item p,
+.platform-theme.platform-theme-command .bundle-projection-head p,
+.platform-theme.platform-theme-command .bundle-projection-meta,
+.platform-theme.platform-theme-command .bundle-projection-item p {
+    color: var(--command-muted);
+}
+
+.platform-theme.platform-theme-command .section-note,
+.platform-theme.platform-theme-command .preview-dock-empty,
+.platform-theme.platform-theme-command .history-empty {
+    background: linear-gradient(180deg, #f7fdff 0%, #edf8fc 100%);
+    border: 1px solid rgba(var(--command-accent-rgb), 0.14);
+    box-shadow: none;
+}
+
+.platform-theme.platform-theme-command .command-overview-flow,
+.platform-theme.platform-theme-command .panel-heading,
+.platform-theme.platform-theme-command .workspace-panel-header {
+    border-color: rgba(var(--command-accent-rgb), 0.12);
+}
+
+.platform-theme.platform-theme-command .task-status-grid span,
+.platform-theme.platform-theme-command .bundle-quality-meta span,
+.platform-theme.platform-theme-command .panel-results .result-stat-table dt,
+.platform-theme.platform-theme-command .panel-results .result-note-table dt,
+.platform-theme.platform-theme-command .panel-results .quant-table span,
+.platform-theme.platform-theme-command .panel-results .result-media-column .result-meta dt,
+.platform-theme.platform-theme-command .panel-history .quant-table span,
+.platform-theme.platform-theme-command .target-summary-strip span {
+    color: var(--command-muted);
+}
+
+.platform-theme.platform-theme-command .task-status-grid strong,
+.platform-theme.platform-theme-command .panel-results .result-stat-table dd,
+.platform-theme.platform-theme-command .panel-results .result-note-table dd,
+.platform-theme.platform-theme-command .panel-results .quant-table strong,
+.platform-theme.platform-theme-command .panel-results .result-media-column .result-meta dd,
+.platform-theme.platform-theme-command .panel-history .quant-table strong,
+.platform-theme.platform-theme-command .target-summary-strip strong,
+.platform-theme.platform-theme-command .panel-results .result-title-block strong,
+.platform-theme.platform-theme-command .panel-history .history-lead,
+.platform-theme.platform-theme-command .panel-results .result-card h3 {
+    color: var(--command-text);
+}
+
+.platform-theme.platform-theme-command .panel-results .result-media-column,
+.platform-theme.platform-theme-command .panel-results .detail-section-body,
+.platform-theme.platform-theme-command .panel-history .history-detail-section .detail-section-body {
+    background: linear-gradient(180deg, #f7fdff 0%, #edf8fc 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.14);
+}
+
+.platform-theme.platform-theme-command .panel-results .result-card a,
+.platform-theme.platform-theme-command .panel-history .history-links a,
+.platform-theme.platform-theme-command .upload-slot input[type="file"]::file-selector-button {
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .preview-card img,
+.platform-theme.platform-theme-command .target-preview-card img,
+.platform-theme.platform-theme-command .panel-results .result-card img {
+    border-color: rgba(var(--command-accent-rgb), 0.12);
+    background: #ffffff;
+}
+
+.platform-theme.platform-theme-command button,
+.platform-theme.platform-theme-command .button-link {
+    background: linear-gradient(135deg, var(--command-accent-strong) 0%, var(--command-accent) 68%, var(--command-accent-bright) 100%);
+    box-shadow: 0 10px 22px rgba(var(--command-accent-rgb), 0.18);
+    color: #ffffff;
+}
+
+.platform-theme.platform-theme-command button:hover:not(:disabled),
+.platform-theme.platform-theme-command .button-link:hover {
+    background: linear-gradient(135deg, #0087ad 0%, #00a0ce 58%, #46c5e5 100%);
+}
+
+.platform-theme.platform-theme-command .secondary-button,
+.platform-theme.platform-theme-command .compact-link {
+    background: #eef9fc;
+    border: 1px solid rgba(var(--command-accent-rgb), 0.18);
+    color: var(--command-accent-strong);
+    box-shadow: none;
+}
+
+.platform-theme.platform-theme-command .secondary-button:hover:not(:disabled),
+.platform-theme.platform-theme-command .compact-link:hover {
+    background: #e2f5fb;
+}
+
+.platform-theme.platform-theme-command input,
+.platform-theme.platform-theme-command select,
+.platform-theme.platform-theme-command textarea {
+    border-color: rgba(var(--command-accent-rgb), 0.18);
+    background: #ffffff;
+    color: var(--command-text);
+}
+
+.platform-theme.platform-theme-command input::placeholder,
+.platform-theme.platform-theme-command textarea::placeholder {
+    color: #85a5b4;
+}
+
+.platform-theme.platform-theme-command input:focus,
+.platform-theme.platform-theme-command select:focus,
+.platform-theme.platform-theme-command textarea:focus {
+    border-color: rgba(var(--command-accent-rgb), 0.42);
+    outline: 3px solid rgba(var(--command-accent-rgb), 0.1);
+}
+
+.platform-theme.platform-theme-command .status-idle,
+.platform-theme.platform-theme-command .task-status-idle,
+.platform-theme.platform-theme-command .quality-idle {
+    background: rgba(var(--command-accent-rgb), 0.08);
+    border-color: rgba(var(--command-accent-rgb), 0.16);
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .status-loading,
+.platform-theme.platform-theme-command .status-warning,
+.platform-theme.platform-theme-command .task-status-running,
+.platform-theme.platform-theme-command .task-status-warning,
+.platform-theme.platform-theme-command .quality-warning,
+.platform-theme.platform-theme-command .bundle-size-warning,
+.platform-theme.platform-theme-command .target-precheck-loading,
+.platform-theme.platform-theme-command .task-status-running .task-status-head span,
+.platform-theme.platform-theme-command .task-status-warning .task-status-head span {
+    background: rgba(240, 190, 105, 0.14);
+    border-color: rgba(240, 190, 105, 0.2);
+    color: #946100;
+}
+
+.platform-theme.platform-theme-command .status-success,
+.platform-theme.platform-theme-command .task-status-success,
+.platform-theme.platform-theme-command .quality-good,
+.platform-theme.platform-theme-command .bundle-size-good,
+.platform-theme.platform-theme-command .target-precheck-success,
+.platform-theme.platform-theme-command .task-status-success .task-status-head span {
+    background: rgba(85, 211, 157, 0.14);
+    border-color: rgba(85, 211, 157, 0.2);
+    color: #0f7a55;
+}
+
+.platform-theme.platform-theme-command .status-error,
+.platform-theme.platform-theme-command .task-status-error,
+.platform-theme.platform-theme-command .quality-reject,
+.platform-theme.platform-theme-command .bundle-size-error,
+.platform-theme.platform-theme-command .target-precheck-error,
+.platform-theme.platform-theme-command .task-status-error .task-status-head span {
+    background: rgba(255, 128, 122, 0.14);
+    border-color: rgba(255, 128, 122, 0.2);
+    color: #a33b35;
+}
+
+/* 2026-05-06 HIT blue tuning closer to reference image */
+.platform-theme.platform-theme-command {
+    --accent: #14a4ce;
+    --accent-strong: #0e94be;
+    --secondary: #30b5da;
+    --command-border: rgba(20, 164, 206, 0.16);
+    --command-border-strong: rgba(20, 164, 206, 0.24);
+    --command-accent: #14a4ce;
+    --command-accent-strong: #0e94be;
+    --command-accent-bright: #42bfe0;
+    --command-accent-soft: #e7f8fc;
+    --command-accent-rgb: 20, 164, 206;
+    --command-shadow: 0 16px 32px rgba(13, 74, 95, 0.08);
+}
+
+.platform-theme.platform-theme-command .command-rail,
+.platform-theme.platform-theme-command .platform-topbar {
+    background: linear-gradient(180deg, #129bc5 0%, #18a7d0 100%);
+}
+
+.platform-theme.platform-theme-command .command-overview-hero,
+.platform-theme.platform-theme-command .global-status,
+.platform-theme.platform-theme-command .upload-hero-card {
+    background: linear-gradient(135deg, #13a1ca 0%, #19abd4 68%, #4bc6e3 100%);
+}
+
+.platform-theme.platform-theme-command .command-overview-flow,
+.platform-theme.platform-theme-command .panel,
+.platform-theme.platform-theme-command .workspace-panel,
+.platform-theme.platform-theme-command .upload-stage-card,
+.platform-theme.platform-theme-command .task-query-panel,
+.platform-theme.platform-theme-command .task-status-panel,
+.platform-theme.platform-theme-command .binding-card,
+.platform-theme.platform-theme-command .preview-card,
+.platform-theme.platform-theme-command .quality-panel,
+.platform-theme.platform-theme-command .bundle-size-panel,
+.platform-theme.platform-theme-command .target-precheck-panel,
+.platform-theme.platform-theme-command .upload-config-card,
+.platform-theme.platform-theme-command .upload-slot,
+.platform-theme.platform-theme-command .field-card,
+.platform-theme.platform-theme-command .field-addon,
+.platform-theme.platform-theme-command .form-action-card,
+.platform-theme.platform-theme-command .action-row-primary,
+.platform-theme.platform-theme-command .workspace-panel-header,
+.platform-theme.platform-theme-command .workspace-summary,
+.platform-theme.platform-theme-command .result-media-column,
+.platform-theme.platform-theme-command .task-guide-card,
+.platform-theme.platform-theme-command .info-guide-card,
+.platform-theme.platform-theme-command .guide-overview-card,
+.platform-theme.platform-theme-command .target-guide-card,
+.platform-theme.platform-theme-command .guide-card,
+.platform-theme.platform-theme-command .dashboard-card,
+.platform-theme.platform-theme-command .summary-card,
+.platform-theme.platform-theme-command .result-card,
+.platform-theme.platform-theme-command .note-card,
+.platform-theme.platform-theme-command .trend-card,
+.platform-theme.platform-theme-command .history-item,
+.platform-theme.platform-theme-command .detail-section,
+.platform-theme.platform-theme-command .batch-result-card,
+.platform-theme.platform-theme-command .bundle-quality-card,
+.platform-theme.platform-theme-command .survey-summary-board,
+.platform-theme.platform-theme-command .survey-risk-board,
+.platform-theme.platform-theme-command .history-directory-board,
+.platform-theme.platform-theme-command .target-preview-card,
+.platform-theme.platform-theme-command .target-meta-card,
+.platform-theme.platform-theme-command .result-brief-shell,
+.platform-theme.platform-theme-command .result-preview-shell,
+.platform-theme.platform-theme-command .preview-dock-shell {
+    background: linear-gradient(180deg, #ffffff 0%, #edf9fc 100%);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(.field-card, .upload-config-card, .upload-slot, .form-action-card, .action-row-primary),
+.platform-theme.platform-theme-command .workspace-panel .field-addon {
+    background: linear-gradient(180deg, #ffffff 0%, #eef9fc 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.16);
+    box-shadow: 0 12px 24px rgba(13, 74, 95, 0.05);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(.field-card, .upload-config-card, .upload-slot, .form-action-card, .action-row-primary).card-missing,
+.platform-theme.platform-theme-command .workspace-panel .field-addon.card-missing {
+    background: linear-gradient(180deg, #ffffff 0%, #f4fbfe 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.22);
+    box-shadow: 0 12px 24px rgba(13, 74, 95, 0.06);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(.field-card, .upload-config-card, .upload-slot).card-complete,
+.platform-theme.platform-theme-command .workspace-panel .field-addon.card-complete {
+    background: linear-gradient(180deg, #f5fcfe 0%, #ebf8fc 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.2);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(.field-card, .upload-config-card, .upload-slot).card-required > label::after,
+.platform-theme.platform-theme-command .workspace-summary-count,
+.platform-theme.platform-theme-command .workspace-summary-count-pending {
+    background: rgba(var(--command-accent-rgb), 0.1);
+    border-color: rgba(var(--command-accent-rgb), 0.16);
+    color: var(--command-accent-strong);
+    box-shadow: none;
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(.field-card, .upload-config-card, .upload-slot, .form-action-card, .action-row-primary)::before,
+.platform-theme.platform-theme-command .info-guide-card::before,
+.platform-theme.platform-theme-command .guide-overview-card::before,
+.platform-theme.platform-theme-command .target-guide-card::before,
+.platform-theme.platform-theme-command .guide-card::before,
+.platform-theme.platform-theme-command .upload-slot:nth-child(2)::before,
+.platform-theme.platform-theme-command .workspace-panel-target .field-card:nth-child(4)::before,
+.platform-theme.platform-theme-command .upload-slot:nth-child(3)::before,
+.platform-theme.platform-theme-command .workspace-panel-target .field-card:nth-child(5)::before {
+    background: linear-gradient(90deg, rgba(var(--command-accent-rgb), 0.94) 0%, rgba(var(--command-accent-rgb), 0.08) 86%);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(input, select, textarea).input-missing {
+    border-color: rgba(var(--command-accent-rgb), 0.24);
+    background: linear-gradient(180deg, #ffffff 0%, #f4fbfe 100%);
+    color: var(--command-text);
+    box-shadow: 0 0 0 3px rgba(var(--command-accent-rgb), 0.08);
+}
+
+.platform-theme.platform-theme-command .workspace-panel :is(input, select, textarea).input-complete {
+    border-color: rgba(var(--command-accent-rgb), 0.22);
+}
+
+.platform-theme.platform-theme-command .form-grid label,
+.platform-theme.platform-theme-command .field-card label,
+.platform-theme.platform-theme-command .upload-config-card label,
+.platform-theme.platform-theme-command .upload-slot label,
+.platform-theme.platform-theme-command .field-addon-label,
+.platform-theme.platform-theme-command .workspace-summary strong {
+    color: var(--command-text);
+}
+
+.platform-theme.platform-theme-command option {
+    background: #ffffff;
+    color: var(--command-text);
+}
+
+/* 2026-05-06 closer to reference image #1 and history module sync */
+.platform-theme.platform-theme-command {
+    --accent: #1498bb;
+    --accent-strong: #0f86a8;
+    --secondary: #38b1d0;
+    --command-border: rgba(20, 152, 187, 0.16);
+    --command-border-strong: rgba(20, 152, 187, 0.24);
+    --command-accent: #1498bb;
+    --command-accent-strong: #0f86a8;
+    --command-accent-bright: #37b7d6;
+    --command-accent-soft: #e7f7fb;
+    --command-accent-rgb: 20, 152, 187;
+}
+
+.platform-theme.platform-theme-command .command-rail,
+.platform-theme.platform-theme-command .platform-topbar {
+    background: linear-gradient(180deg, #1497ba 0%, #1a9fc1 100%);
+}
+
+.platform-theme.platform-theme-command .command-overview-hero,
+.platform-theme.platform-theme-command .global-status,
+.platform-theme.platform-theme-command .upload-hero-card {
+    background: linear-gradient(135deg, #1499bc 0%, #1ca6ca 68%, #49bdd8 100%);
+}
+
+.platform-theme.platform-theme-command .platform-brand {
+    display: block;
+}
+
+.platform-theme.platform-theme-command .platform-brand-head {
+    display: grid;
+    grid-template-columns: minmax(210px, 268px) minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+}
+
+.platform-theme.platform-theme-command .platform-brand-lockup-frame {
+    display: grid;
+    align-items: center;
+    padding: 10px 14px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 12px 28px rgba(13, 74, 95, 0.12);
+}
+
+.platform-theme.platform-theme-command .platform-brand-lockup {
+    display: block;
+    width: 100%;
+    max-width: 246px;
+    height: auto;
+}
+
+.platform-theme.platform-theme-command .platform-brand-copy {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.platform-theme.platform-theme-command .command-overview-hero {
+    position: relative;
+    overflow: hidden;
+}
+
+.platform-theme.platform-theme-command .command-overview-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -8% -52% auto;
+    width: 360px;
+    height: 360px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 72%);
+    pointer-events: none;
+}
+
+.platform-theme.platform-theme-command .panel-history .history-directory-board,
+.platform-theme.platform-theme-command .panel-history .history-item,
+.platform-theme.platform-theme-command .panel-history .trend-card,
+.platform-theme.platform-theme-command .panel-history .history-current-hint,
+.platform-theme.platform-theme-command .panel-history .history-empty {
+    background: linear-gradient(180deg, #ffffff 0%, #edf9fc 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.14);
+}
+
+.platform-theme.platform-theme-command .panel-history .history-house-link {
+    background: linear-gradient(180deg, rgba(var(--command-accent-rgb), 0.11) 0%, rgba(var(--command-accent-rgb), 0.04) 100%);
+    border-color: rgba(var(--command-accent-rgb), 0.18);
+    color: var(--command-text);
+    box-shadow: none;
+}
+
+.platform-theme.platform-theme-command .panel-history .history-house-link small,
+.platform-theme.platform-theme-command .panel-history .history-links a,
+.platform-theme.platform-theme-command .panel-history .history-time {
+    color: var(--command-accent-strong);
+}
+
+.platform-theme.platform-theme-command .panel-history .history-house-link:hover {
+    color: var(--command-accent-strong);
+    border-color: rgba(var(--command-accent-rgb), 0.24);
+    box-shadow: 0 14px 26px rgba(var(--command-accent-rgb), 0.08);
+}
+
+.platform-theme.platform-theme-command .history-house-card-active,
+.platform-theme.platform-theme-command .history-house-card:hover {
+    border-color: rgba(var(--command-accent-rgb), 0.24);
+    background: linear-gradient(180deg, #f4fbfe 0%, #e8f7fb 100%);
+    box-shadow: 0 16px 30px rgba(var(--command-accent-rgb), 0.1);
+}
+
+@media (max-width: 1120px) {
+    .platform-theme.platform-theme-command .platform-brand-head {
+        grid-template-columns: 1fr;
+    }
+
+    .platform-theme.platform-theme-command .platform-brand-lockup-frame {
+        width: fit-content;
+    }
+}
+
+/* 2026-05-06 brand area replanned from emblem + school identity references */
+.platform-theme.platform-theme-command .platform-topbar {
+    grid-template-columns: minmax(440px, 1.18fr) auto auto;
+    gap: 18px;
+    align-items: center;
+    padding: 18px 22px;
+}
+
+.platform-theme.platform-theme-command .platform-brand {
+    display: grid;
+    gap: 14px;
+}
+
+.platform-theme.platform-theme-command .platform-brand-head {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.platform-theme.platform-theme-command .platform-school-mark {
+    flex: 0 0 auto;
+    width: 86px;
+    height: 86px;
+    display: grid;
+    place-items: center;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.platform-theme.platform-theme-command .platform-school-emblem {
+    width: 70px;
+    height: 70px;
+    display: block;
+}
+
+.platform-theme.platform-theme-command .platform-school-copy {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.platform-theme.platform-theme-command .platform-school-cn {
+    font-family: "STXingkai", "STKaiti", "KaiTi", serif;
+    font-size: clamp(36px, 2.4vw, 52px);
+    line-height: 1;
+    color: #ffffff;
+    letter-spacing: 0.02em;
+}
+
+.platform-theme.platform-theme-command .platform-school-en {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.platform-theme.platform-theme-command .platform-brand-copy {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.platform-theme.platform-theme-command .platform-brand-kicker {
+    margin-top: 2px;
+}
+
+.platform-theme.platform-theme-command .platform-brand strong {
+    font-family: "Bahnschrift SemiBold", "Bahnschrift", "Microsoft YaHei UI", sans-serif;
+    font-size: clamp(34px, 3vw, 50px);
+    line-height: 1.02;
+    letter-spacing: 0.01em;
+}
+
+.platform-theme.platform-theme-command .platform-brand-summary,
+.platform-theme.platform-theme-command .platform-brand-note {
+    margin: 0;
+    max-width: 66ch;
+    font-size: 15px;
+    line-height: 1.72;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.platform-theme.platform-theme-command .platform-brand-divider {
+    width: 78px;
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.36);
+}
+
+.platform-theme.platform-theme-command .platform-nav {
+    align-self: end;
+}
+
+.platform-theme.platform-theme-command .platform-nav-item {
+    min-width: 118px;
+    min-height: 48px;
+    padding: 0 18px;
+    border-radius: 14px;
+    clip-path: none;
+    font-size: 15px;
+    letter-spacing: 0;
+}
+
+.platform-theme.platform-theme-command .platform-nav-item::after {
+    inset: auto 18% 0;
+}
+
+.platform-theme.platform-theme-command .platform-signal {
+    padding-bottom: 8px;
+}
+
+.platform-theme.platform-theme-command .platform-signal span {
+    height: 14px;
+}
+
+@media (max-width: 1320px) {
+    .platform-theme.platform-theme-command .platform-topbar {
+        grid-template-columns: 1fr;
+        align-items: start;
+    }
+
+    .platform-theme.platform-theme-command .platform-nav {
+        justify-content: flex-start;
+    }
+
+    .platform-theme.platform-theme-command .platform-signal {
+        display: none;
+    }
+}
+
+@media (max-width: 760px) {
+    .platform-theme.platform-theme-command .platform-brand-head {
+        align-items: flex-start;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-mark {
+        width: 72px;
+        height: 72px;
+        border-radius: 20px;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-emblem {
+        width: 58px;
+        height: 58px;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-cn {
+        font-size: 28px;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-en {
+        font-size: 12px;
+        letter-spacing: 0.05em;
+    }
+
+    .platform-theme.platform-theme-command .platform-brand-note {
+        display: none;
+    }
+}
+
+/* 2026-05-06 cover layout replanned: school identity left, platform intro + nav right */
+.platform-theme.platform-theme-command .platform-topbar {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 18px 22px 14px;
+}
+
+.platform-theme.platform-theme-command .platform-brand {
+    display: grid;
+    grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
+    gap: 28px;
+    align-items: stretch;
+}
+
+.platform-theme.platform-theme-command .platform-school-panel {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    min-width: 0;
+    padding: 2px 24px 0 0;
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.platform-theme.platform-theme-command .platform-school-lockup-frame {
+    width: min(100%, 340px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 12px 16px 10px;
+    overflow: hidden;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    box-shadow: 0 18px 30px rgba(8, 60, 77, 0.14);
+}
+
+.platform-theme.platform-theme-command .platform-school-lockup-image {
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    transform: none;
+}
+
+.platform-theme.platform-theme-command .platform-brand-panel {
+    display: grid;
+    grid-template-rows: auto auto;
+    gap: 18px;
+    align-content: space-between;
+    min-width: 0;
+    min-height: 100%;
+}
+
+.platform-theme.platform-theme-command .platform-brand-copy {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+}
+
+.platform-theme.platform-theme-command .platform-brand-kicker {
+    width: fit-content;
+    margin: 0;
+}
+
+.platform-theme.platform-theme-command .platform-brand strong {
+    font-size: clamp(38px, 3vw, 54px);
+    line-height: 1.04;
+    letter-spacing: 0;
+    max-width: 13ch;
+}
+
+.platform-theme.platform-theme-command .platform-brand-summary {
+    max-width: 58ch;
+    font-size: 16px;
+    line-height: 1.78;
+}
+
+.platform-theme.platform-theme-command .platform-brand-divider,
+.platform-theme.platform-theme-command .platform-brand-note {
+    display: none;
+}
+
+.platform-theme.platform-theme-command .platform-brand-footer {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.platform-theme.platform-theme-command .platform-nav {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-self: auto;
+}
+
+.platform-theme.platform-theme-command .platform-nav-item {
+    min-width: 120px;
+    min-height: 50px;
+    padding: 0 20px;
+    font-size: 16px;
+}
+
+.platform-theme.platform-theme-command .platform-signal {
+    align-self: center;
+    padding: 0 4px 6px 0;
+}
+
+.platform-theme.platform-theme-command .platform-signal span {
+    width: 4px;
+    height: 16px;
+}
+
+@media (max-width: 1380px) {
+    .platform-theme.platform-theme-command .platform-brand {
+        grid-template-columns: 1fr;
+        gap: 18px;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-panel {
+        padding-right: 0;
+        padding-bottom: 14px;
+        border-right: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    }
+}
+
+@media (max-width: 980px) {
+    .platform-theme.platform-theme-command .platform-brand-footer {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .platform-theme.platform-theme-command .platform-signal {
+        display: none;
+    }
+}
+
+@media (max-width: 760px) {
+    .platform-theme.platform-theme-command .platform-topbar {
+        padding: 16px 16px 14px;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-panel {
+        padding-right: 0;
+    }
+
+    .platform-theme.platform-theme-command .platform-school-lockup-frame {
+        width: min(100%, 284px);
+        padding: 10px 12px 8px;
+    }
+
+    .platform-theme.platform-theme-command .platform-brand strong {
+        font-size: 34px;
+        max-width: none;
+    }
+
+    .platform-theme.platform-theme-command .platform-brand-summary {
+        font-size: 15px;
+    }
+
+    .platform-theme.platform-theme-command .platform-nav-item {
+        min-width: calc(50% - 6px);
+        padding: 0 14px;
+    }
+}

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>房屋裂缝智能检测平台</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260428-layout-refine-3') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260506-hit-blue-8') }}">
 </head>
 <body class="platform-theme platform-theme-command">
     <main class="page">
@@ -78,24 +78,35 @@
             <div class="command-main">
         <header class="platform-topbar" id="top">
             <div class="platform-brand">
-                <span class="platform-brand-kicker">房屋安全巡检中台 · Inspection Command Center</span>
-                <strong>房屋裂缝智能检测平台</strong>
-                <p class="platform-brand-summary">
-                    支持房屋档案建模、拍摄指引、二维码靶标生成、三景图像上传预检、检测任务追踪与历史风险汇总。
-                </p>
-            </div>
-            <nav class="platform-nav" aria-label="主导航">
-                <a class="platform-nav-item platform-nav-item-active" href="#top">平台总览</a>
-                <a class="platform-nav-item" href="#archiveSection">档案建模</a>
-                <a class="platform-nav-item" href="#guidanceSection">拍摄指引</a>
-                <a class="platform-nav-item" href="#targetSection">靶标生成</a>
-                <a class="platform-nav-item" href="#uploadSection">上传分析</a>
-                <a class="platform-nav-item" href="#surveyPanel">历史汇总</a>
-            </nav>
-            <div class="platform-signal" aria-hidden="true">
-                <span></span>
-                <span></span>
-                <span></span>
+                <div class="platform-school-panel">
+                    <div class="platform-school-lockup-frame">
+                        <img class="platform-school-lockup-image" src="{{ url_for('static', filename='bjut-school-lockup-cropped.png', v='20260506-hit-blue-8') }}" alt="北京工业大学校徽及校名">
+                    </div>
+                </div>
+                <div class="platform-brand-panel">
+                    <div class="platform-brand-copy">
+                        <span class="platform-brand-kicker">房屋安全巡检中台 · Inspection Command Center</span>
+                        <strong>房屋裂缝智能检测平台</strong>
+                        <p class="platform-brand-summary">
+                            支持房屋档案建模、拍摄指引、二维码靶标生成、三景图像上传预检、检测任务追踪与历史风险汇总。
+                        </p>
+                    </div>
+                    <div class="platform-brand-footer">
+                        <nav class="platform-nav" aria-label="主导航">
+                            <a class="platform-nav-item platform-nav-item-active" href="#top">平台总览</a>
+                            <a class="platform-nav-item" href="#archiveSection">档案建模</a>
+                            <a class="platform-nav-item" href="#guidanceSection">拍摄指引</a>
+                            <a class="platform-nav-item" href="#targetSection">靶标生成</a>
+                            <a class="platform-nav-item" href="#uploadSection">上传分析</a>
+                            <a class="platform-nav-item" href="#surveyPanel">历史汇总</a>
+                        </nav>
+                        <div class="platform-signal" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </header>
 

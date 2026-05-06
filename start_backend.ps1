@@ -35,9 +35,11 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pythonExe = Join-Path $projectRoot ".venv311\Scripts\python.exe"
 $appPath = Join-Path $projectRoot "backend\app.py"
 $port = 5000
-$localhostUrl = "http://127.0.0.1:$port/"
+$entryPath = "/platform"
+$entryUrlSuffix = if ($entryPath -eq "/") { "/" } else { "$entryPath/" }
+$localhostUrl = "http://127.0.0.1:$port$entryUrlSuffix"
 $localIpAddress = Get-LocalIpv4Address
-$lanUrl = if ($localIpAddress) { "http://$localIpAddress`:$port/" } else { $null }
+$lanUrl = if ($localIpAddress) { "http://$localIpAddress`:$port$entryUrlSuffix" } else { $null }
 
 if (-not (Test-Path $pythonExe)) {
     Exit-WithFailure "Missing interpreter: $pythonExe"
@@ -97,6 +99,7 @@ Write-Host ""
 Set-Location $projectRoot
 $env:HOUSE_UPLOAD_HOST = "0.0.0.0"
 $env:HOUSE_UPLOAD_PORT = "$port"
+$env:HOUSE_UPLOAD_ENTRY_PATH = $entryPath
 & $pythonExe $appPath
 
 if ($LASTEXITCODE -ne 0) {
