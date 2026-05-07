@@ -1,23 +1,18 @@
 import csv
-import importlib.util
-import json
 import os
-import socket
 import sys
 import textwrap
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from io import BytesIO, StringIO
 from pathlib import Path
 from uuid import uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import cv2
 import numpy as np
 from flask import Flask, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
-from flask_sqlalchemy import SQLAlchemy
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat, UnidentifiedImageError
 from sqlalchemy import and_, or_, text
 from werkzeug.utils import secure_filename
@@ -45,13 +40,132 @@ try:
 except ImportError:
     from target_generator_service import TARGET_SPECS, TargetGenerationError, TargetGeneratorService
 
+try:
+    from .data import (
+        CrackDetectionResults,
+        DetectionTask,
+        HouseInfo,
+        ImageSegmentationRecord,
+        QrTarget,
+        bind_qr_target_house,
+        db,
+        ensure_database_tables as _ensure_database_tables,
+        ensure_sqlite_columns as _ensure_sqlite_columns,
+        extract_primary_target,
+        get_bundle_records,
+        get_house_history_records,
+        get_previous_house_record,
+        get_recent_house_records,
+        resolve_house_from_request,
+        resolve_house_from_target,
+        resolve_qr_target_house,
+    )
+except ImportError:
+    from data import (
+        CrackDetectionResults,
+        DetectionTask,
+        HouseInfo,
+        ImageSegmentationRecord,
+        QrTarget,
+        bind_qr_target_house,
+        db,
+        ensure_database_tables as _ensure_database_tables,
+        ensure_sqlite_columns as _ensure_sqlite_columns,
+        extract_primary_target,
+        get_bundle_records,
+        get_house_history_records,
+        get_previous_house_record,
+        get_recent_house_records,
+        resolve_house_from_request,
+        resolve_house_from_target,
+        resolve_qr_target_house,
+    )
+
+try:
+    from .core import (
+        BUNDLE_CAPTURE_SCALES,
+        BUNDLE_PROJECTION_COLORS,
+        FRONTEND_ENTRY_PATH,
+        PREFERRED_PYTHON,
+        QUALITY_GUIDANCE,
+        REPORT_FONT_CANDIDATES,
+        REPORT_MARGIN,
+        REPORT_PAGE_SIZE,
+        RISK_ACTIONS,
+        RISK_LEVEL_THRESHOLDS,
+        RISK_TEXT,
+        SEGMENTATION_ROOT,
+        TARGET_ROOT,
+        UPLOAD_ROOT,
+        allowed_file,
+        build_file_url,
+        build_target_public_url,
+        clean_text,
+        collect_upload_metadata,
+        decode_json,
+        encode_json,
+        ensure_runtime_directories,
+        format_capture_scale_label,
+        format_datetime_value,
+        format_marker_mode_label,
+        format_report_timestamp,
+        format_uploaded_timestamp,
+        generate_bundle_code,
+        generate_detection_code,
+        generate_task_code,
+        get_bundle_generated_at,
+        get_bundle_uploaded_at,
+        get_record_generated_at,
+        get_record_uploaded_at,
+        get_runtime_dependency_status,
+        parse_local_datetime_input,
+        serialize_datetime_value,
+        utc_now,
+    )
+except ImportError:
+    from core import (
+        BUNDLE_CAPTURE_SCALES,
+        BUNDLE_PROJECTION_COLORS,
+        FRONTEND_ENTRY_PATH,
+        PREFERRED_PYTHON,
+        QUALITY_GUIDANCE,
+        REPORT_FONT_CANDIDATES,
+        REPORT_MARGIN,
+        REPORT_PAGE_SIZE,
+        RISK_ACTIONS,
+        RISK_LEVEL_THRESHOLDS,
+        RISK_TEXT,
+        SEGMENTATION_ROOT,
+        TARGET_ROOT,
+        UPLOAD_ROOT,
+        allowed_file,
+        build_file_url,
+        build_target_public_url,
+        clean_text,
+        collect_upload_metadata,
+        decode_json,
+        encode_json,
+        ensure_runtime_directories,
+        format_capture_scale_label,
+        format_datetime_value,
+        format_marker_mode_label,
+        format_report_timestamp,
+        format_uploaded_timestamp,
+        generate_bundle_code,
+        generate_detection_code,
+        generate_task_code,
+        get_bundle_generated_at,
+        get_bundle_uploaded_at,
+        get_record_generated_at,
+        get_record_uploaded_at,
+        get_runtime_dependency_status,
+        parse_local_datetime_input,
+        serialize_datetime_value,
+        utc_now,
+    )
+
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parent
-UPLOAD_ROOT = BASE_DIR / "uploads"
-SEGMENTATION_ROOT = UPLOAD_ROOT / "segmentation"
-TARGET_ROOT = UPLOAD_ROOT / "targets"
-PREFERRED_PYTHON = PROJECT_ROOT / ".venv311" / "Scripts" / "python.exe"
 
 app = Flask(__name__)
 app.static_folder = str((BASE_DIR.parent / "frontend").resolve())
@@ -64,257 +178,29 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
-db = SQLAlchemy(app)
+db.init_app(app)
 segmentation_service = CrackSegmentationService()
 quantification_service = CrackQuantificationService()
 target_generator_service = TargetGeneratorService(TARGET_ROOT)
 task_executor = ThreadPoolExecutor(max_workers=1)
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
-APP_TIMEZONE_NAME = os.environ.get("APP_TIMEZONE", "Asia/Shanghai")
+
+
 try:
-    APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
-except ZoneInfoNotFoundError:
-    APP_TIMEZONE = timezone(timedelta(hours=8)) if APP_TIMEZONE_NAME == "Asia/Shanghai" else timezone.utc
-
-
-def normalize_frontend_entry_path(value: str | None) -> str:
-    candidate = (value or "/platform").strip() or "/platform"
-    if not candidate.startswith("/"):
-        candidate = f"/{candidate}"
-    return candidate.rstrip("/") or "/"
-
-
-FRONTEND_ENTRY_PATH = normalize_frontend_entry_path(os.environ.get("HOUSE_UPLOAD_ENTRY_PATH"))
-
-QUALITY_GUIDANCE = {
-    "good": "图像质量通过，可继续自动分析。",
-    "warning": "图像可以分析，但建议根据提示优化拍摄质量。",
-    "reject": "图像质量不足，建议按提示补拍；如必须保留本次记录，可手动强制上传。",
-}
-
-RISK_TEXT = {
-    "无风险": "当前裂缝迹象较轻，建议纳入常规观察。",
-    "低风险": "当前更像表层裂缝，建议记录并定期复拍。",
-    "中风险": "裂缝已有持续发展风险，建议安排专业人员复核。",
-    "高风险": "裂缝风险较高，建议尽快停用相关区域并联系专业机构检测。",
-}
-
-RISK_ACTIONS = {
-    "无风险": "保留本次检测档案，1-3 个月内复拍一次。",
-    "低风险": "建议定点复拍并安排表层修补，如位于非承重部位可先观察。",
-    "中风险": "建议尽快安排专业人员现场复核，并做好临时警示。",
-    "高风险": "建议立即停止使用相关区域，联系结构安全检测与加固单位。",
-}
-
-RISK_LEVEL_THRESHOLDS = [
-    ("无风险", 0, 1),
-    ("低风险", 2, 4),
-    ("中风险", 5, 7),
-    ("高风险", 8, None),
-]
-
-REPORT_PAGE_SIZE = (1240, 1754)
-REPORT_MARGIN = 72
-REPORT_FONT_CANDIDATES = [
-    Path("C:/Windows/Fonts/msyh.ttc"),
-    Path("C:/Windows/Fonts/msyhbd.ttc"),
-    Path("C:/Windows/Fonts/simsun.ttc"),
-]
-BUNDLE_CAPTURE_SCALES = [
-    ("long_view", "长景"),
-    ("medium_view", "中景"),
-    ("close_view", "近景"),
-]
-CAPTURE_SCALE_LABELS = {key: label for key, label in BUNDLE_CAPTURE_SCALES}
-MARKER_MODE_LABELS = {
-    "qr_anchor_rectified": "二维码 + 四角校正",
-    "qr_decode": "二维码解码",
-    "legacy_rect": "旧版靶标识别",
-}
-
-BUNDLE_PROJECTION_COLORS = {
-    "中景": (44, 163, 242),
-    "近景": (255, 170, 40),
-}
-
-
-def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def ensure_runtime_directories() -> None:
-    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-    SEGMENTATION_ROOT.mkdir(parents=True, exist_ok=True)
-    TARGET_ROOT.mkdir(parents=True, exist_ok=True)
-
-
-def build_file_url(path: Path) -> str | None:
-    try:
-        relative_path = path.resolve().relative_to(UPLOAD_ROOT.resolve())
-    except ValueError:
-        return None
-    return url_for("uploaded_file", filename=relative_path.as_posix())
-
-
-def detect_local_ipv4() -> str | None:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            ip_address = clean_text(sock.getsockname()[0])
-            if ip_address and not ip_address.startswith(("127.", "169.254.")):
-                return ip_address
-    except OSError:
-        pass
-
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET):
-            ip_address = clean_text(info[4][0])
-            if ip_address and not ip_address.startswith(("127.", "169.254.")):
-                return ip_address
-    except OSError:
-        pass
-    return None
-
-
-def format_capture_scale_label(value: str | None) -> str:
-    return CAPTURE_SCALE_LABELS.get(clean_text(value), clean_text(value, "-"))
-
-
-def format_marker_mode_label(value: str | None) -> str:
-    return MARKER_MODE_LABELS.get(clean_text(value), clean_text(value, "-"))
-
-
-def get_target_public_base_url() -> tuple[str, str | None]:
-    configured_base = clean_text(os.environ.get("TARGET_PUBLIC_BASE_URL") or os.environ.get("PUBLIC_BASE_URL"))
-    if configured_base:
-        return configured_base.rstrip("/"), None
-
-    base_url = request.host_url.rstrip("/")
-    host = clean_text(request.host.split(":", 1)[0]).lower()
-    warning = None
-    if host in {"127.0.0.1", "localhost", "::1"}:
-        lan_ip = detect_local_ipv4()
-        if lan_ip:
-            port = request.host.split(":", 1)[1] if ":" in request.host else ""
-            port_suffix = f":{port}" if port else ""
-            warning = f"当前通过 localhost 访问，二维码已自动改写为局域网地址 {lan_ip}{port_suffix}，手机与电脑需处于同一网络。"
-            return f"{request.scheme}://{lan_ip}{port_suffix}", warning
-
-        warning = "当前二维码详情链接使用 localhost，仅本机可访问。请配置 TARGET_PUBLIC_BASE_URL 或改用局域网 IP 打开系统。"
-    return base_url, warning
-
-
-def build_target_public_url(target_id: str) -> tuple[str, str | None]:
-    base_url, warning = get_target_public_base_url()
-    relative_path = url_for("view_qr_target", target_id=target_id)
-    return f"{base_url}{relative_path}", warning
-
-
-def get_runtime_dependency_status() -> dict[str, bool]:
-    modules = {
-        "flask": "flask",
-        "flask_sqlalchemy": "flask_sqlalchemy",
-        "numpy": "numpy",
-        "opencv_python_headless": "cv2",
-        "pillow": "PIL",
-        "torch": "torch",
-        "torchvision": "torchvision",
-        "segmentation_models_pytorch": "segmentation_models_pytorch",
-    }
-    return {name: importlib.util.find_spec(module) is not None for name, module in modules.items()}
-
-
-def get_torch_runtime_details() -> list[str]:
-    if importlib.util.find_spec("torch") is None:
-        return []
-
-    try:
-        torch = importlib.import_module("torch")
-    except Exception as exc:  # pragma: no cover
-        return [f"Unable to inspect torch runtime: {exc}"]
-
-    details = [f"Torch version: {getattr(torch, '__version__', 'unknown')}"]
-    cuda_build = getattr(getattr(torch, "version", None), "cuda", None)
-    details.append(f"Torch CUDA build: {cuda_build or 'cpu-only'}")
-
-    try:
-        cuda_available = bool(torch.cuda.is_available())
-    except Exception as exc:  # pragma: no cover
-        details.append(f"Torch CUDA availability check failed: {exc}")
-        return details
-
-    details.append(f"Torch CUDA available: {cuda_available}")
-    if cuda_available:
-        try:
-            details.append(f"Torch GPU count: {torch.cuda.device_count()}")
-            details.append(f"Torch GPU 0: {torch.cuda.get_device_name(0)}")
-        except Exception as exc:  # pragma: no cover
-            details.append(f"Torch GPU query failed: {exc}")
-
-    return details
+    from .core.runtime import format_inference_error as _format_inference_error
+except ImportError:
+    from core.runtime import format_inference_error as _format_inference_error
 
 
 def format_inference_error(exc: Exception) -> str:
-    base_message = str(exc)
-    dependency_status = get_runtime_dependency_status()
-    missing_dependencies = [name for name, installed in dependency_status.items() if not installed]
-
-    details = [
-        base_message,
-        f"Current Python: {sys.executable}",
-        f"Python version: {sys.version.split()[0]}",
-        f"INFERENCE_DEVICE: {getattr(segmentation_service, 'device_preference', 'auto')}",
-    ]
-
-    if missing_dependencies:
-        details.append("Missing modules in current environment: " + ", ".join(missing_dependencies))
-
-    details.extend(get_torch_runtime_details())
-
-    if PREFERRED_PYTHON.exists() and Path(sys.executable).resolve() != PREFERRED_PYTHON.resolve():
-        details.append(f"Start the backend with: {PREFERRED_PYTHON} backend\\app.py")
-
-    return " | ".join(details)
+    return _format_inference_error(exc, segmentation_service=segmentation_service)
 
 
-def clean_text(value: str | None, fallback: str = "") -> str:
-    return (value or fallback).strip()
+def ensure_database_tables() -> None:
+    _ensure_database_tables(app)
 
 
-def encode_json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
-def decode_json(value: str | None, fallback: object) -> object:
-    if not value:
-        return fallback
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return fallback
-
-
-def generate_detection_code(house_number: str | None) -> str:
-    prefix = clean_text(house_number, "HOUSE").upper().replace(" ", "")[:12] or "HOUSE"
-    return f"{prefix}-{uuid4().hex[:8].upper()}"
-
-
-def generate_bundle_code(house_number: str | None) -> str:
-    prefix = clean_text(house_number, "BUNDLE").upper().replace(" ", "")[:12] or "BUNDLE"
-    return f"{prefix}-BATCH-{uuid4().hex[:6].upper()}"
-
-
-def generate_task_code(house_number: str | None) -> str:
-    prefix = clean_text(house_number, "TASK").upper().replace(" ", "")[:12] or "TASK"
-    return f"{prefix}-TASK-{uuid4().hex[:8].upper()}"
-
-
-def collect_upload_metadata(form_data) -> dict[str, str]:
-    return {
-        "capture_scale": clean_text(form_data.get("capture_scale"), "未标注"),
-        "component_type": clean_text(form_data.get("component_type"), "未标注"),
-        "scenario_type": clean_text(form_data.get("scenario_type"), "常规巡检"),
-    }
+def ensure_sqlite_columns() -> None:
+    _ensure_sqlite_columns(app)
 
 
 def analyze_image_quality(image_path: Path) -> dict[str, object]:
@@ -552,26 +438,6 @@ def build_record_metadata(record: "ImageSegmentationRecord") -> dict[str, str]:
         "component_type": clean_text(record.component_type, "未标注"),
         "scenario_type": clean_text(record.scenario_type, "未标注"),
     }
-
-
-def get_previous_house_record(record: "ImageSegmentationRecord") -> "ImageSegmentationRecord | None":
-    if not record.house_id:
-        return None
-
-    query = ImageSegmentationRecord.query.filter_by(house_id=record.house_id, analysis_status="completed").filter(
-        ImageSegmentationRecord.id != record.id
-    )
-    if record.created_at is not None:
-        query = query.filter(
-            or_(
-                ImageSegmentationRecord.created_at < record.created_at,
-                and_(ImageSegmentationRecord.created_at == record.created_at, ImageSegmentationRecord.id < record.id),
-            )
-        )
-    else:
-        query = query.filter(ImageSegmentationRecord.id < record.id)
-
-    return query.order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc()).first()
 
 
 def build_previous_record_lookup(
@@ -1314,113 +1180,6 @@ def add_recognition_visual_page(record: "ImageSegmentationRecord") -> Image.Imag
     )
     add_paragraph_card(draw, "阶段说明", stage_summary["recognition"]["summary"], current_y, height=132)
     return canvas
-
-
-def get_house_history_records(house_id: int | None, limit: int = 5) -> list["ImageSegmentationRecord"]:
-    if not house_id:
-        return []
-    return (
-        ImageSegmentationRecord.query.filter_by(house_id=house_id)
-        .order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
-        .limit(limit)
-        .all()
-    )
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
-
-
-def to_local_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(APP_TIMEZONE)
-
-
-def to_utc_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def serialize_datetime_value(value: datetime | None) -> str | None:
-    utc_value = to_utc_datetime(value)
-    if utc_value is None:
-        return None
-    return utc_value.isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
-def format_datetime_value(value: datetime | None, include_seconds: bool = True) -> str:
-    local_value = to_local_datetime(value)
-    if local_value is None:
-        return "-"
-    return local_value.strftime("%Y-%m-%d %H:%M:%S" if include_seconds else "%Y-%m-%d %H:%M")
-
-
-def parse_local_datetime_input(value: str | None) -> datetime | None:
-    text = clean_text(value)
-    if not text:
-        return None
-
-    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            local_value = datetime.strptime(text, fmt).replace(tzinfo=APP_TIMEZONE)
-        except ValueError:
-            continue
-        return local_value.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0)
-    return None
-
-
-def format_datetime_local_input(value: datetime | None) -> str:
-    local_value = to_local_datetime(value)
-    if local_value is None:
-        return ""
-    return local_value.strftime("%Y-%m-%dT%H:%M")
-
-
-def get_record_uploaded_at(record: "ImageSegmentationRecord") -> datetime | None:
-    return record.uploaded_at or record.created_at
-
-
-def get_record_generated_at(record: "ImageSegmentationRecord") -> datetime | None:
-    return record.created_at
-
-
-def get_bundle_uploaded_at(records: list["ImageSegmentationRecord"]) -> datetime | None:
-    timestamps = [get_record_uploaded_at(record) for record in records if get_record_uploaded_at(record)]
-    return min(timestamps) if timestamps else None
-
-
-def get_bundle_generated_at(records: list["ImageSegmentationRecord"]) -> datetime | None:
-    timestamps = [get_record_generated_at(record) for record in records if get_record_generated_at(record)]
-    return max(timestamps) if timestamps else None
-
-
-def format_report_timestamp(record: "ImageSegmentationRecord", include_seconds: bool = False) -> str:
-    if record.created_at:
-        return format_datetime_value(record.created_at, include_seconds=include_seconds)
-    return f"记录 {record.id}"
-
-
-def format_uploaded_timestamp(record: "ImageSegmentationRecord", include_seconds: bool = False) -> str:
-    uploaded_at = get_record_uploaded_at(record)
-    if uploaded_at:
-        return format_datetime_value(uploaded_at, include_seconds=include_seconds)
-    return f"记录 {record.id}"
-
-
-def get_bundle_records(bundle_code: str) -> list["ImageSegmentationRecord"]:
-    records = (
-        ImageSegmentationRecord.query.filter_by(upload_bundle_code=bundle_code)
-        .order_by(ImageSegmentationRecord.created_at.asc(), ImageSegmentationRecord.id.asc())
-        .all()
-    )
-    scale_order = {label: index for index, (_, label) in enumerate(BUNDLE_CAPTURE_SCALES)}
-    return sorted(records, key=lambda item: scale_order.get(item.capture_scale or "", 99))
 
 
 def add_trend_chart(
@@ -2183,240 +1942,6 @@ def add_no_cache_headers(response):
     return response
 
 
-class HouseInfo(db.Model):
-    __tablename__ = "house_info"
-
-    id = db.Column(db.Integer, primary_key=True)
-    house_number = db.Column(db.String(50), unique=True, nullable=False)
-    house_type = db.Column(db.String(50))
-    crack_location = db.Column(db.String(100))
-    detection_type = db.Column(db.String(50))
-    upload_time = db.Column(db.DateTime, server_default=db.func.now())
-    crack_results = db.relationship("CrackDetectionResults", backref="house_info", lazy=True)
-    image_detections = db.relationship("ImageSegmentationRecord", backref="house_info", lazy=True)
-    detection_tasks = db.relationship("DetectionTask", backref="house_info", lazy=True)
-    qr_targets = db.relationship("QrTarget", backref="house_info", lazy=True)
-
-
-class CrackDetectionResults(db.Model):
-    __tablename__ = "crack_detection_results"
-
-    id = db.Column(db.Integer, primary_key=True)
-    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=False)
-    crack_width = db.Column(db.Float)
-    crack_length = db.Column(db.Float)
-    crack_angle = db.Column(db.Float)
-    damage_level = db.Column(db.String(50))
-
-
-class DetectionTask(db.Model):
-    __tablename__ = "detection_task"
-
-    id = db.Column(db.Integer, primary_key=True)
-    task_code = db.Column(db.String(40), unique=True, nullable=False)
-    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
-    bundle_code = db.Column(db.String(50), nullable=False)
-    status = db.Column(db.String(20), default="queued", nullable=False)
-    status_message = db.Column(db.String(500))
-    total_items = db.Column(db.Integer, default=0)
-    processed_items = db.Column(db.Integer, default=0)
-    allow_low_quality = db.Column(db.Boolean, default=False)
-    run_segmentation = db.Column(db.Boolean, default=True)
-    request_metadata_json = db.Column(db.Text)
-    upload_items_json = db.Column(db.Text)
-    quality_results_json = db.Column(db.Text)
-    results_json = db.Column(db.Text)
-    bundle_projection_json = db.Column(db.Text)
-    result_status_code = db.Column(db.Integer)
-    error_detail = db.Column(db.Text)
-    started_at = db.Column(db.DateTime)
-    completed_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
-
-
-class QrTarget(db.Model):
-    __tablename__ = "qr_target"
-
-    id = db.Column(db.Integer, primary_key=True)
-    target_id = db.Column(db.String(40), unique=True, nullable=False)
-    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
-    house_number = db.Column(db.String(50), nullable=False)
-    inspection_region = db.Column(db.String(120), nullable=False)
-    scene_type = db.Column(db.String(50), nullable=False)
-    inspection_at = db.Column(db.DateTime)
-    report_reference = db.Column(db.String(120))
-    notes = db.Column(db.Text)
-    spec_key = db.Column(db.String(40))
-    qr_payload = db.Column(db.Text)
-    preview_path = db.Column(db.String(500))
-    pdf_path = db.Column(db.String(500))
-    manifest_path = db.Column(db.String(500))
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
-
-
-class ImageSegmentationRecord(db.Model):
-    __tablename__ = "image_segmentation_record"
-
-    id = db.Column(db.Integer, primary_key=True)
-    house_id = db.Column(db.Integer, db.ForeignKey("house_info.id"), nullable=True)
-    upload_bundle_code = db.Column(db.String(50))
-    detection_code = db.Column(db.String(40), unique=True, nullable=False)
-    target_id = db.Column(db.String(40))
-    analysis_status = db.Column(db.String(20), default="completed")
-    original_filename = db.Column(db.String(255), nullable=False)
-    source_image_path = db.Column(db.String(500), nullable=False)
-    uploaded_at = db.Column(db.DateTime)
-    mask_path = db.Column(db.String(500))
-    overlay_path = db.Column(db.String(500))
-    crack_pixel_count = db.Column(db.Integer)
-    crack_area_ratio = db.Column(db.Float)
-    inference_device = db.Column(db.String(50))
-    patch_count = db.Column(db.Integer)
-    capture_scale = db.Column(db.String(20))
-    component_type = db.Column(db.String(50))
-    scenario_type = db.Column(db.String(50))
-    quality_score = db.Column(db.Float)
-    quality_status = db.Column(db.String(20))
-    quality_warnings_json = db.Column(db.Text)
-    risk_level = db.Column(db.String(20))
-    risk_summary = db.Column(db.String(500))
-    recommendation = db.Column(db.String(500))
-    marker_status = db.Column(db.String(20))
-    marker_count = db.Column(db.Integer)
-    physical_scale_mm_per_pixel = db.Column(db.Float)
-    target_overlay_path = db.Column(db.String(500))
-    quantification_status = db.Column(db.String(20))
-    quantification_message = db.Column(db.String(500))
-    component_count = db.Column(db.Integer)
-    sample_count = db.Column(db.Integer)
-    max_width_px = db.Column(db.Float)
-    avg_width_px = db.Column(db.Float)
-    median_width_px = db.Column(db.Float)
-    crack_length_px = db.Column(db.Float)
-    crack_angle_deg = db.Column(db.Float)
-    max_width_mm = db.Column(db.Float)
-    avg_width_mm = db.Column(db.Float)
-    median_width_mm = db.Column(db.Float)
-    crack_length_mm = db.Column(db.Float)
-    quant_overlay_path = db.Column(db.String(500))
-    width_chart_path = db.Column(db.String(500))
-    created_at = db.Column(db.DateTime, server_default=db.func.now())
-
-
-def ensure_database_tables() -> None:
-    with app.app_context():
-        db.create_all()
-
-
-def ensure_sqlite_columns() -> None:
-    migrations = {
-        "image_segmentation_record": {
-            "detection_code": "TEXT",
-            "target_id": "TEXT",
-            "upload_bundle_code": "TEXT",
-            "uploaded_at": "DATETIME",
-            "analysis_status": "TEXT DEFAULT 'completed'",
-            "capture_scale": "TEXT",
-            "component_type": "TEXT",
-            "scenario_type": "TEXT",
-            "quality_score": "FLOAT",
-            "quality_status": "TEXT",
-            "quality_warnings_json": "TEXT",
-            "risk_level": "TEXT",
-            "risk_summary": "TEXT",
-            "recommendation": "TEXT",
-            "marker_status": "TEXT",
-            "marker_count": "INTEGER",
-            "physical_scale_mm_per_pixel": "FLOAT",
-            "target_overlay_path": "TEXT",
-            "quantification_status": "TEXT",
-            "quantification_message": "TEXT",
-            "component_count": "INTEGER",
-            "sample_count": "INTEGER",
-            "max_width_px": "FLOAT",
-            "avg_width_px": "FLOAT",
-            "median_width_px": "FLOAT",
-            "crack_length_px": "FLOAT",
-            "crack_angle_deg": "FLOAT",
-            "max_width_mm": "FLOAT",
-            "avg_width_mm": "FLOAT",
-            "median_width_mm": "FLOAT",
-            "crack_length_mm": "FLOAT",
-            "quant_overlay_path": "TEXT",
-            "width_chart_path": "TEXT",
-        },
-        "qr_target": {
-            "house_id": "INTEGER",
-            "house_number": "TEXT",
-            "inspection_region": "TEXT",
-            "scene_type": "TEXT",
-            "inspection_at": "DATETIME",
-            "report_reference": "TEXT",
-            "notes": "TEXT",
-            "spec_key": "TEXT",
-            "qr_payload": "TEXT",
-            "preview_path": "TEXT",
-            "pdf_path": "TEXT",
-            "manifest_path": "TEXT",
-            "created_at": "DATETIME",
-        },
-    }
-
-    with app.app_context():
-        with db.engine.begin() as connection:
-            for table_name, columns in migrations.items():
-                existing_columns = {
-                    row[1] for row in connection.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
-                }
-                for column_name, column_definition in columns.items():
-                    if column_name in existing_columns:
-                        continue
-                    try:
-                        connection.exec_driver_sql(
-                            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
-                        )
-                    except Exception as exc:  # pragma: no cover
-                        if "duplicate column name" not in str(exc).lower():
-                            raise
-
-            connection.exec_driver_sql(
-                """
-                UPDATE image_segmentation_record
-                SET detection_code = COALESCE(detection_code, 'LEGACY-' || id)
-                WHERE detection_code IS NULL OR detection_code = ''
-                """
-            )
-            connection.exec_driver_sql(
-                """
-                UPDATE image_segmentation_record
-                SET analysis_status = COALESCE(analysis_status, 'completed')
-                WHERE analysis_status IS NULL OR analysis_status = ''
-                """
-            )
-            connection.exec_driver_sql(
-                """
-                UPDATE image_segmentation_record
-                SET uploaded_at = (
-                    SELECT detection_task.created_at
-                    FROM detection_task
-                    WHERE detection_task.bundle_code = image_segmentation_record.upload_bundle_code
-                    ORDER BY detection_task.created_at ASC, detection_task.id ASC
-                    LIMIT 1
-                )
-                WHERE uploaded_at IS NULL
-                  AND upload_bundle_code IS NOT NULL
-                  AND upload_bundle_code <> ''
-                """
-            )
-            connection.exec_driver_sql(
-                """
-                UPDATE image_segmentation_record
-                SET uploaded_at = COALESCE(uploaded_at, created_at)
-                WHERE uploaded_at IS NULL
-                """
-            )
-
-
 def serialize_segmentation_record(
     record: ImageSegmentationRecord,
     previous_record: "ImageSegmentationRecord | None" = None,
@@ -2855,103 +2380,6 @@ def recover_incomplete_detection_tasks() -> None:
             task.error_detail = task.error_detail or "The service restarted while this task was pending."
             task.completed_at = recovered_at
         db.session.commit()
-
-
-def resolve_house_from_request(house_id_value: str | None) -> tuple["HouseInfo | None", tuple[dict, int] | None]:
-    if not house_id_value:
-        return None, None
-
-    try:
-        house_id = int(house_id_value)
-    except ValueError:
-        return None, ({"message": "house_id 无效。"}, 400)
-
-    house = db.session.get(HouseInfo, house_id)
-    if house is None:
-        return None, ({"message": "未找到对应的房屋档案。"}, 404)
-
-    return house, None
-
-
-def resolve_qr_target_house(house_id_value: str | None, house_number: str) -> "HouseInfo | None":
-    normalized_house_number = clean_text(house_number)
-    if normalized_house_number:
-        matched_by_number = HouseInfo.query.filter_by(house_number=normalized_house_number).first()
-        if matched_by_number is not None:
-            return matched_by_number
-
-    if not house_id_value:
-        return None
-
-    try:
-        house_id = int(house_id_value)
-    except ValueError:
-        return None
-
-    house = db.session.get(HouseInfo, house_id)
-    if house is None:
-        return None
-    if normalized_house_number and clean_text(house.house_number) != normalized_house_number:
-        return None
-    return house
-
-
-def extract_primary_target(marker_detection: dict[str, object] | None) -> dict[str, str]:
-    targets = (marker_detection or {}).get("targets") or []
-    if not isinstance(targets, list):
-        return {}
-
-    for target in targets:
-        if not isinstance(target, dict):
-            continue
-        target_id = clean_text(target.get("target_id"))
-        house_number = clean_text(target.get("house_number"))
-        scene_type = clean_text(target.get("scene_type"))
-        if target_id or house_number:
-            return {
-                "target_id": target_id,
-                "house_number": house_number,
-                "scene_type": scene_type,
-            }
-    return {}
-
-
-def resolve_house_from_target(target_info: dict[str, str]) -> "HouseInfo | None":
-    target_id = clean_text(target_info.get("target_id"))
-    if target_id:
-        qr_target = QrTarget.query.filter_by(target_id=target_id).first()
-        if qr_target and qr_target.house_id:
-            return db.session.get(HouseInfo, qr_target.house_id)
-
-    house_number = clean_text(target_info.get("house_number"))
-    if house_number:
-        return HouseInfo.query.filter_by(house_number=house_number).first()
-    return None
-
-
-def bind_qr_target_house(target_id: str | None, house: "HouseInfo | None") -> None:
-    if not target_id or house is None:
-        return
-
-    qr_target = QrTarget.query.filter_by(target_id=target_id).first()
-    if qr_target is None:
-        return
-
-    if qr_target.house_id is None:
-        qr_target.house_id = house.id
-    if not clean_text(qr_target.house_number):
-        qr_target.house_number = house.house_number
-
-
-def get_recent_house_records(house_id: int | None, limit: int = 5) -> list["ImageSegmentationRecord"]:
-    if not house_id:
-        return []
-    return (
-        ImageSegmentationRecord.query.filter_by(house_id=house_id, analysis_status="completed")
-        .order_by(ImageSegmentationRecord.created_at.desc(), ImageSegmentationRecord.id.desc())
-        .limit(limit)
-        .all()
-    )
 
 
 def save_uploaded_file(file_storage) -> tuple[str, Path]:

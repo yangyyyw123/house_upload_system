@@ -3,6 +3,7 @@ let currentHouseNumber = "";
 let currentTaskCode = "";
 let activeHistoryHouseId = null;
 let historyHouseDirectory = [];
+let historyHousePage = 1;
 let taskPollTimer = null;
 const previewUrls = new Map();
 
@@ -303,7 +304,7 @@ function updateHouseBinding(houseId, houseNumber) {
     currentHouseNumber = houseNumber;
     document.getElementById("houseBindingText").textContent = houseId
         ? `当前已绑定房屋：ID ${houseId} / 编号 ${houseNumber}`
-        : "尚未绑定房屋信息。提交房屋档案后，后续图像会自动归档到对应房屋。";
+        : "尚未绑定房屋信息。";
     syncTargetHouseNumber(Boolean(houseNumber));
 }
 
@@ -628,14 +629,14 @@ function updateTargetSpecGuidance() {
     if (crackHint && crackSizeSelect) {
         const crackScaleText = crackSizeSelect.selectedOptions[0]?.textContent?.trim() || "常规裂缝 / 默认推荐";
         crackHint.textContent = recommendedSpec
-            ? `${crackScaleText}。当前建议优先选择 ${recommendedSpec.label}。`
+            ? `${crackScaleText}。建议：${recommendedSpec.label}。`
             : `${crackScaleText}。`;
     }
 
     if (specHint) {
         specHint.textContent = selectedSpec
-            ? `${selectedSpec.description} 当前靶标尺寸 ${formatTargetSize(selectedSpec)}，二维码边长 ${selectedSpec.qr_size_mm ?? "-"} mm。`
-            : "根据检测区域裂缝大小选择靶标尺寸。";
+            ? `${selectedSpec.label}，尺寸 ${formatTargetSize(selectedSpec)}，二维码边长 ${selectedSpec.qr_size_mm ?? "-"} mm。`
+            : "请选择靶标规格。";
     }
 }
 
@@ -1115,6 +1116,37 @@ function buildMetaChipGroup(items = []) {
     return chips ? `<div class="meta-chip-group">${chips}</div>` : "";
 }
 
+function getHistoryHousePageCount() {
+    return Math.max(1, Math.ceil(historyHouseDirectory.length / 6));
+}
+
+function goHistoryHousePage(page) {
+    historyHousePage = Math.min(Math.max(1, page), getHistoryHousePageCount());
+    renderHistoryHouseDirectory();
+}
+
+function renderHistoryHousePager() {
+    const pager = document.getElementById("historyHousePager");
+    if (!pager) {
+        return;
+    }
+
+    const totalPages = getHistoryHousePageCount();
+    if (historyHouseDirectory.length <= 6) {
+        pager.innerHTML = "";
+        setVisible("historyHousePager", false);
+        return;
+    }
+
+    historyHousePage = Math.min(Math.max(1, historyHousePage), totalPages);
+    pager.innerHTML = `
+        <button type="button" class="secondary-button history-house-pager-button" onclick="goHistoryHousePage(${historyHousePage - 1})" ${historyHousePage <= 1 ? "disabled" : ""}>上一页</button>
+        <span class="history-house-pager-status">${historyHousePage}/${totalPages}</span>
+        <button type="button" class="secondary-button history-house-pager-button" onclick="goHistoryHousePage(${historyHousePage + 1})" ${historyHousePage >= totalPages ? "disabled" : ""}>下一页</button>
+    `;
+    setVisible("historyHousePager", true);
+}
+
 function renderDashboardOverview(elementId, cards = []) {
     const container = document.getElementById(elementId);
     if (!container) {
@@ -1258,7 +1290,7 @@ function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
         boardTitle.textContent = "\u5386\u53f2\u68c0\u6d4b\u623f\u5c4b";
     }
     if (boardDescription) {
-        boardDescription.textContent = "\u4ee5\u4e0b\u623f\u5c4b\u5df2\u6709\u68c0\u6d4b\u8bb0\u5f55\u3002\u70b9\u51fb\u623f\u53f7\u53ef\u76f4\u63a5\u6253\u5f00\u6700\u65b0\u68c0\u6d4b\u62a5\u544a\uff0c\u70b9\u51fb\u201c\u67e5\u770b\u5386\u53f2\u201d\u53ef\u5c55\u5f00\u8be5\u623f\u5c4b\u7684\u5386\u6b21\u68c0\u6d4b\u8bb0\u5f55\u3002";
+        boardDescription.textContent = "\u6309\u884c\u5c55\u793a\u5df2\u6709\u68c0\u6d4b\u8bb0\u5f55\u7684\u623f\u5c4b\uff0c\u6bcf\u9875\u6700\u591a 6 \u680b\u3002\u70b9\u51fb\u623f\u53f7\u53ef\u6253\u5f00\u6700\u65b0\u62a5\u544a\uff0c\u70b9\u51fb\u201c\u67e5\u770b\u5386\u53f2\u201d\u53ef\u5c55\u5f00\u5386\u6b21\u68c0\u6d4b\u8bb0\u5f55\u3002";
     }
 
     if (!list) {
@@ -1346,6 +1378,7 @@ function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
 
     if (!hasItems) {
         list.innerHTML = "";
+        renderHistoryHousePager();
         setVisible("historyHouseBoard", false);
         if (!activeHistoryHouseId) {
             setVisible("historyPanel", false);
@@ -1353,25 +1386,35 @@ function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
         return;
     }
 
-    list.innerHTML = historyHouseDirectory
-        .map((item) => {
+    const activeIndex = historyHouseDirectory.findIndex((item) => Number(item.house_id) === Number(activeHistoryHouseId));
+    const totalPages = getHistoryHousePageCount();
+    if (activeIndex >= 0) {
+        historyHousePage = Math.floor(activeIndex / 6) + 1;
+    }
+    historyHousePage = Math.min(Math.max(1, historyHousePage), totalPages);
+    const pageStart = (historyHousePage - 1) * 6;
+    const pageItems = historyHouseDirectory.slice(pageStart, pageStart + 6);
+
+    list.innerHTML = pageItems
+        .map((item, index) => {
             const isActive = Number(item.house_id) === Number(activeHistoryHouseId);
             const reportUrl = item.latest_report_view_url || item.latest_report_url || "#";
             const bundleLink = item.latest_bundle_report_url
-                ? `<a class="button-link compact-link" href="${escapeHtml(item.latest_bundle_report_url)}?download=0" target="_blank" rel="noopener noreferrer">\u6253\u5f00\u603b\u62a5\u544a</a>`
+                ? `<a class="button-link compact-link" href="${escapeHtml(item.latest_bundle_report_url)}?download=0" target="_blank" rel="noopener noreferrer">\u603b\u62a5\u544a</a>`
                 : "";
+            const order = pageStart + index + 1;
 
             return `
                 <article class="history-item history-house-card${isActive ? " history-house-card-active" : ""}">
-                    <div class="history-header">
-                        <div>
+                    <div class="history-house-row">
+                        <div class="history-house-main">
                             <a class="history-house-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">
+                                <span class="history-house-order">${order}.</span>
                                 <span>${escapeHtml(item.house_number || "-")}</span>
-                                <small>\u70b9\u51fb\u76f4\u63a5\u6253\u5f00\u6700\u65b0\u62a5\u544a</small>
                             </a>
-                            <p>${escapeHtml(item.latest_detection_code || "\u6682\u65e0\u68c0\u6d4b\u7f16\u53f7")}</p>
+                            <p class="history-house-code">${escapeHtml(item.latest_detection_code || "\u6682\u65e0\u68c0\u6d4b\u7f16\u53f7")}</p>
                         </div>
-                        <div class="history-head-meta">
+                        <div class="history-house-side">
                             <span class="meta-chip ${getRiskToneClass(item.latest_risk_level || "-")}">
                                 <em>\u6700\u65b0\u98ce\u9669</em>
                                 <strong>${escapeHtml(item.latest_risk_level || "-")}</strong>
@@ -1379,27 +1422,34 @@ function renderHistoryHouseDirectory(houses = historyHouseDirectory) {
                             <span class="history-time">${escapeHtml(item.latest_generated_at_display || item.latest_created_at_display || "\u672a\u77e5\u65f6\u95f4")}</span>
                         </div>
                     </div>
-                    ${buildMetaChipGroup([
-                        { label: "\u5386\u53f2\u6b21\u6570", value: `${item.history_count || 0}` },
-                        { label: "\u6784\u4ef6", value: item.latest_component_type || "-" },
-                        { label: "\u573a\u666f", value: item.latest_scenario_type || "-" },
-                    ])}
-                    <div class="history-actions">
-                        <button type="button" class="secondary-button" onclick="openHouseHistory(${Number(item.house_id)})">\u67e5\u770b\u5386\u53f2</button>
-                        <a class="button-link compact-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">\u6253\u5f00\u6700\u65b0\u62a5\u544a</a>
-                        ${bundleLink}
+                    <div class="history-house-row history-house-row-meta">
+                        ${buildMetaChipGroup([
+                            { label: "\u5386\u53f2\u6b21\u6570", value: `${item.history_count || 0}` },
+                            { label: "\u6784\u4ef6", value: item.latest_component_type || "-" },
+                            { label: "\u573a\u666f", value: item.latest_scenario_type || "-" },
+                        ])}
+                        <div class="history-actions history-house-actions">
+                            <button type="button" class="secondary-button" onclick="openHouseHistory(${Number(item.house_id)})">\u67e5\u770b\u5386\u53f2</button>
+                            <a class="button-link compact-link" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">\u6700\u65b0\u62a5\u544a</a>
+                            ${bundleLink}
+                        </div>
                     </div>
                 </article>
             `;
         })
         .join("");
 
+    renderHistoryHousePager();
     setVisible("historyHouseBoard", true);
     setVisible("historyPanel", true);
 }
 
 function openHouseHistory(houseId) {
     activeHistoryHouseId = houseId;
+    const targetIndex = historyHouseDirectory.findIndex((item) => Number(item.house_id) === Number(houseId));
+    if (targetIndex >= 0) {
+        historyHousePage = Math.floor(targetIndex / 6) + 1;
+    }
     renderHistoryHouseDirectory();
     loadHouseDetections(houseId);
 }
